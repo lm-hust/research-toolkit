@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Research Toolkit: Staged Workflow & FulltextCheckpoint Prototype</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 2rem; max-width: 1100px; margin: 0 auto; line-height: 1.5; }
+    h1 { font-size: 1.8rem; margin-bottom: 0.5rem; color: var(--text); }
+    .subtitle { color: var(--muted); margin-bottom: 2rem; font-size: 0.95rem; }
+    
+    .question-banner {
+      background: rgba(56, 189, 248, 0.1);
+      border-left: 4px solid var(--accent);
+      padding: 1rem 1.25rem;
+      border-radius: 4px;
+      margin-bottom: 2rem;
+    }
+    .question-banner h3 { color: var(--accent); font-size: 1rem; margin-bottom: 0.25rem; }
+    .question-banner p { font-size: 0.9rem; color: #cbd5e1; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; }
+    .card h2 { font-size: 1.1rem; margin-bottom: 1rem; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+
+    .state-field { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.9rem; }
+    .state-label { color: var(--muted); }
+    .state-val { font-weight: 600; }
+    .badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase; font-weight: 700; }
+    .badge-ready { background: rgba(52, 211, 153, 0.2); color: var(--success); }
+    .badge-pending { background: rgba(251, 191, 36, 0.2); color: var(--warning); }
+    .badge-review { background: rgba(168, 85, 247, 0.2); color: #c084fc; }
+
+    .paper-item { background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; }
+    .paper-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.25rem; color: #f1f5f9; }
+    .paper-meta { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.5rem; }
+    .paper-actions { display: flex; gap: 0.5rem; align-items: center; }
+
+    .btn { background: var(--border); color: var(--text); border: none; padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem; font-weight: 500; transition: background 0.2s; }
+    .btn:hover { background: #475569; }
+    .btn-primary { background: var(--accent); color: #0f172a; font-weight: 600; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-ucl { background: #6366f1; color: white; }
+    .btn-ucl:hover { background: #4f46e5; }
+    .btn-success { background: var(--success); color: #064e3b; font-weight: 600; }
+    .btn-outline { background: transparent; border: 1px solid var(--border); }
+    .btn-outline:hover { background: rgba(255,255,255,0.05); }
+
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+    .tab { padding: 0.4rem 0.8rem; cursor: pointer; border-radius: 4px; font-size: 0.85rem; color: var(--muted); }
+    .tab.active { background: var(--accent); color: #0f172a; font-weight: 600; }
+
+    .walkthrough-box { background: rgba(15, 23, 42, 0.5); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1.5rem; }
+    .walkthrough-box p { font-size: 0.9rem; color: #cbd5e1; margin-bottom: 0.75rem; }
+    .step-btn-group { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+    .log-box { background: #000; border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; font-family: monospace; font-size: 0.8rem; color: #38bdf8; max-height: 180px; overflow-y: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+
+  <h1>🔬 Research Toolkit: Staged Workflow & FulltextCheckpoint</h1>
+  <p class="subtitle">Interactive logic prototype demonstrating state transitions across Discovery, Zotero Ingestion, UCL Fulltext Checkpoint, and NotebookLM Sync.</p>
+
+  <div class="question-banner">
+    <h3>Question Under Test (Issue #5)</h3>
+    <p>What should the CLI interface and state contract look like for separating paper discovery & Zotero insertion from NotebookLM synchronization, allowing the user to inspect Zotero and verify UCL/OA full-text PDFs before upload?</p>
+  </div>
+
+  <!-- Walkthrough Section -->
+  <div class="card" style="margin-bottom: 1.5rem;">
+    <h2>Guided Walkthroughs (Test Scenarios)</h2>
+    <div class="tabs" id="walkthroughTabs">
+      <div class="tab active" onclick="switchTab('ucl')">Scenario 1: UCL Proxy & Connector Duplicate (User's Case)</div>
+      <div class="tab" onclick="switchTab('oa')">Scenario 2: All Open Access (Automatic Flow)</div>
+      <div class="tab" onclick="switchTab('partial')">Scenario 3: Partial Resolution & Force Sync</div>
+    </div>
+
+    <div id="uclScenario" class="walkthrough-box">
+      <p><strong>Scenario 1 Description:</strong> Papers are discovered and inserted into Zotero. One paper is non-OA (paywalled). The Checkpoint halts, prints UCL EZproxy link. The user clicks and saves via Zotero Connector, creating a duplicate item with full PDF. The toolkit reconciles the duplicate and uploads cleanly.</p>
+      <div class="step-btn-group">
+        <button class="btn btn-primary" onclick="runStep(1)">Step 1: Execute `search --topic "Graph Neural Networks"`</button>
+        <button class="btn btn-ucl" id="step2Btn" disabled onclick="runStep(2)">Step 2: Checkpoint Halt & Generate UCL Link</button>
+        <button class="btn" id="step3Btn" disabled onclick="runStep(3)">Step 3: User saves via Zotero Connector (creates duplicate)</button>
+        <button class="btn btn-success" id="step4Btn" disabled onclick="runStep(4)">Step 4: Execute `sync-notebook` (Reconciles & Uploads)</button>
+      </div>
+    </div>
+
+    <div id="oaScenario" class="walkthrough-box" style="display:none;">
+      <p><strong>Scenario 2 Description:</strong> All papers retrieved are Open Access (e.g. ArXiv or Nature OA). FulltextCheckpoint passes automatically with 0 manual intervention.</p>
+      <div class="step-btn-group">
+        <button class="btn btn-primary" onclick="runOAStep(1)">Step 1: Search OA Corpus</button>
+        <button class="btn btn-success" id="oaStep2Btn" disabled onclick="runOAStep(2)">Step 2: Auto-Download OA PDFs & Sync NotebookLM</button>
+      </div>
+    </div>
+
+    <div id="partialScenario" class="walkthrough-box" style="display:none;">
+      <p><strong>Scenario 3 Description:</strong> 8 papers found, 6 have PDFs, 2 remain unavailable. User decides not to manually hunt down the remaining 2, running `sync-notebook --allow-partial`.</p>
+      <div class="step-btn-group">
+        <button class="btn btn-primary" onclick="runPartialStep(1)">Step 1: Search & Insert</button>
+        <button class="btn btn-primary" id="partialStep2Btn" disabled onclick="runPartialStep(2)">Step 2: Run `sync-notebook --allow-partial`</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live State Grid -->
+  <div class="grid">
+    <!-- State Card -->
+    <div class="card">
+      <h2>Current Session State</h2>
+      <div class="state-field"><span class="state-label">Workflow Stage:</span><span class="state-val" id="stateStage">IDLE</span></div>
+      <div class="state-field"><span class="state-label">Active Zotero Collection:</span><span class="state-val" id="stateCol">None</span></div>
+      <div class="state-field"><span class="state-label">Total Paper Candidates:</span><span class="state-val" id="stateCount">0</span></div>
+      <div class="state-field"><span class="state-label">PDFs Ready (Local Disk):</span><span class="state-val" id="stateReady" style="color:var(--success);">0</span></div>
+      <div class="state-field"><span class="state-label">PDFs Pending (Need UCL):</span><span class="state-val" id="statePending" style="color:var(--warning);">0</span></div>
+      <div class="state-field"><span class="state-label">Duplicates Reconciled:</span><span class="state-val" id="stateDuplicates">0</span></div>
+      <div class="state-field"><span class="state-label">NotebookLM Sync Status:</span><span class="state-val" id="stateNotebook">NOT_SYNCED</span></div>
+
+      <h2 style="margin-top: 1.5rem;">Free-Play Actions</h2>
+      <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <button class="btn btn-outline" onclick="resetState()">Reset State</button>
+        <button class="btn btn-outline" onclick="triggerDeduplication()">Run Deduplication Scan</button>
+      </div>
+    </div>
+
+    <!-- Terminal Output Log -->
+    <div class="card">
+      <h2>Terminal CLI Output (`research-toolkit`)</h2>
+      <div class="log-box" id="terminalLog">$ research-toolkit --help
+Commands:
+  search         Search S2 & OpenAlex, rank candidates, insert into Zotero
+  checkpoint     Inspect FulltextCheckpoint status & output UCL proxy links
+  sync-notebook  Reconcile duplicates, extract local PDFs, upload to NotebookLM
+  ask            Query grounded sources in NotebookLM</div>
+    </div>
+  </div>
+
+  <!-- Papers in Collection -->
+  <div class="card">
+    <h2>Papers in Active `ZoteroCollection` (<span id="paperListCount">0</span>)</h2>
+    <div id="papersContainer">
+      <p style="color:var(--muted); font-size:0.9rem;">No papers inserted yet. Run a search command above to populate.</p>
+    </div>
+  </div>
+
+  <!-- Pure Logic Module -->
+  <script>
+    // --- Pure Logic State Machine ---
+    const StateMachine = {
+      createInitialState() {
+        return {
+          stage: "IDLE", // IDLE, DISCOVERED, CHECKPOINT_PENDING, CHECKPOINT_READY, SYNCED
+          collectionName: null,
+          papers: [],
+          notebookId: null,
+          duplicatesReconciled: 0,
+        };
+      },
+
+      search(state, query, options = {}) {
+        const isOAOnly = options.oaOnly || false;
+        const newPapers = [
+          {
+            key: "ZOT01",
+            title: "Comprehensive Survey on Graph Neural Networks (2024)",
+            doi: "10.1109/tpami.2024.101234",
+            isReview: true,
+            hasPdf: true,
+            pdfSource: "OpenAlex OA",
+            uclProxy: "https://libproxy.ucl.ac.uk/login?url=https://doi.org/10.1109/tpami.2024.101234"
+          },
+          {
+            key: "ZOT02",
+            title: "Geometric Deep Learning: Grids, Groups, Graphs, Geodesics",
+            doi: "10.1038/s41586-021-03819-2",
+            isReview: false,
+            hasPdf: isOAOnly, // false in paywalled scenario
+            pdfSource: isOAOnly ? "Unpaywall OA" : null,
+            uclProxy: "https://libproxy.ucl.ac.uk/login?url=https://doi.org/10.1038/s41586-021-03819-2"
+          },
+          {
+            key: "ZOT03",
+            title: "Relational Inductive Biases in Deep Learning",
+            doi: "10.48550/arXiv.1806.01261",
+            isReview: false,
+            hasPdf: true,
+            pdfSource: "ArXiv OA",
+            uclProxy: "https://libproxy.ucl.ac.uk/login?url=https://doi.org/10.48550/arXiv.1806.01261"
+          }
+        ];
+
+        const hasPending = newPapers.some(p => !p.hasPdf);
+        return {
+          ...state,
+          stage: hasPending ? "CHECKPOINT_PENDING" : "CHECKPOINT_READY",
+          collectionName: `research/${query.replace(/\s+/g, "-").toLowerCase()}`,
+          papers: newPapers,
+          duplicatesReconciled: 0,
+          notebookId: null
+        };
+      },
+
+      simulateConnectorImport(state, targetDoi) {
+        // User used Zotero Connector on UCL page, adding duplicate with PDF
+        const updatedPapers = state.papers.map(p => {
+          if (p.doi === targetDoi) {
+            return {
+              ...p,
+              hasPdf: true,
+              pdfSource: "UCL Institutional Access (via Zotero Connector)",
+              isReconciledDuplicate: true
+            };
+          }
+          return p;
+        });
+
+        const hasPending = updatedPapers.some(p => !p.hasPdf);
+        return {
+          ...state,
+          papers: updatedPapers,
+          duplicatesReconciled: state.duplicatesReconciled + 1,
+          stage: hasPending ? "CHECKPOINT_PENDING" : "CHECKPOINT_READY"
+        };
+      },
+
+      syncNotebook(state, force = false) {
+        const readyPapers = state.papers.filter(p => p.hasPdf);
+        if (readyPapers.length === 0) {
+          throw new Error("No PDFs available to upload.");
+        }
+        return {
+          ...state,
+          stage: "SYNCED",
+          notebookId: "nb_" + Math.random().toString(36).substring(2, 9)
+        };
+      }
+    };
+
+    // --- Page Shell & Event Wiring ---
+    let appState = StateMachine.createInitialState();
+
+    function log(msg) {
+      const el = document.getElementById("terminalLog");
+      el.textContent += "\n" + msg;
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function render() {
+      document.getElementById("stateStage").textContent = appState.stage;
+      document.getElementById("stateCol").textContent = appState.collectionName || "None";
+      document.getElementById("stateCount").textContent = appState.papers.length;
+
+      const readyCount = appState.papers.filter(p => p.hasPdf).length;
+      const pendingCount = appState.papers.filter(p => !p.hasPdf).length;
+
+      document.getElementById("stateReady").textContent = readyCount;
+      document.getElementById("statePending").textContent = pendingCount;
+      document.getElementById("stateDuplicates").textContent = appState.duplicatesReconciled;
+      document.getElementById("stateNotebook").textContent = appState.notebookId ? `SYNCED (${appState.notebookId})` : "NOT_SYNCED";
+      document.getElementById("paperListCount").textContent = appState.papers.length;
+
+      const container = document.getElementById("papersContainer");
+      if (appState.papers.length === 0) {
+        container.innerHTML = '<p style="color:var(--muted); font-size:0.9rem;">No papers inserted yet.</p>';
+        return;
+      }
+
+      container.innerHTML = appState.papers.map(p => `
+        <div class="paper-item">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="paper-title">${p.title}</div>
+            <div>
+              ${p.isReview ? '<span class="badge badge-review">Review</span>' : ''}
+              <span class="badge ${p.hasPdf ? 'badge-ready' : 'badge-pending'}">${p.hasPdf ? 'PDF Ready' : 'Pending PDF'}</span>
+            </div>
+          </div>
+          <div class="paper-meta">
+            DOI: ${p.doi} | Source: ${p.hasPdf ? p.pdfSource : 'Paywalled (Requires UCL)'}
+            ${p.isReconciledDuplicate ? '<span style="color:var(--accent);"> • [Reconciled Connector Entry]</span>' : ''}
+          </div>
+          ${!p.hasPdf ? `
+            <div class="paper-actions">
+              <a href="${p.uclProxy}" target="_blank" class="btn btn-ucl" style="text-decoration:none; display:inline-block;">Open via UCL EZproxy ↗</a>
+              <span style="font-size:0.8rem; color:var(--muted);">(Log in & click Zotero Connector in browser)</span>
+            </div>
+          ` : ''}
+        </div>
+      `).join("");
+    }
+
+    // --- Guided Walkthrough Handlers ---
+    function switchTab(tab) {
+      document.querySelectorAll("#walkthroughTabs .tab").forEach(t => t.classList.remove("active"));
+      document.getElementById("uclScenario").style.display = tab === "ucl" ? "block" : "none";
+      document.getElementById("oaScenario").style.display = tab === "oa" ? "block" : "none";
+      document.getElementById("partialScenario").style.display = tab === "partial" ? "block" : "none";
+      event.target.classList.add("active");
+    }
+
+    function runStep(step) {
+      if (step === 1) {
+        log("$ research-toolkit search 'Graph Neural Networks' --top 3");
+        log("🔍 Fetching Semantic Scholar & OpenAlex...");
+        log("📊 Ranking candidates: 1 Review Paper prioritized at rank #1.");
+        log("📁 Created Zotero Collection: 'research/graph-neural-networks'");
+        log("💾 Inserted 3 items into Zotero.");
+        appState = StateMachine.search(appState, "Graph Neural Networks");
+        render();
+        document.getElementById("step2Btn").disabled = false;
+      } else if (step === 2) {
+        log("\n$ research-toolkit checkpoint --status");
+        log("⚠️ FulltextCheckpoint Active: 2/3 PDFs verified locally.");
+        log("❌ 1 paper missing PDF: 'Geometric Deep Learning...' (DOI: 10.1038/s41586-021-03819-2)");
+        log("🔗 Clickable UCL Link: https://libproxy.ucl.ac.uk/login?url=https://doi.org/10.1038/s41586-021-03819-2");
+        log("👉 Action: Open link, authenticate UCL SSO, and click Zotero Connector.");
+        document.getElementById("step3Btn").disabled = false;
+      } else if (step === 3) {
+        log("\n[User Simulation] User opened UCL link and clicked Zotero Connector.");
+        log("⚡ Zotero Connector downloaded full text PDF into Zotero.");
+        appState = StateMachine.simulateConnectorImport(appState, "10.1038/s41586-021-03819-2");
+        render();
+        document.getElementById("step4Btn").disabled = false;
+      } else if (step === 4) {
+        log("\n$ research-toolkit sync-notebook");
+        log("🔄 Scanning Zotero Collection: clustering items by canonical DOI...");
+        log("✨ Detected duplicate entry for 10.1038/s41586-021-03819-2: adopted Connector PDF.");
+        log("🚀 All 3/3 PDFs ready on local disk. Uploading to Google NotebookLM...");
+        appState = StateMachine.syncNotebook(appState);
+        render();
+        log("✅ Upload complete! NotebookLM ID: " + appState.notebookId);
+        log("💡 Ready for grounded Q&A: run `research-toolkit ask 'Summarize key findings'`");
+      }
+    }
+
+    function runOAStep(step) {
+      if (step === 1) {
+        log("\n$ research-toolkit search 'LLM Reasoning' --oa-only");
+        appState = StateMachine.search(appState, "LLM Reasoning", { oaOnly: true });
+        render();
+        log("✅ All 3 papers resolved automatically via Open Access!");
+        document.getElementById("oaStep2Btn").disabled = false;
+      } else if (step === 2) {
+        log("\n$ research-toolkit sync-notebook");
+        appState = StateMachine.syncNotebook(appState);
+        render();
+        log("✅ Uploaded 3 OA PDFs to NotebookLM: " + appState.notebookId);
+      }
+    }
+
+    function runPartialStep(step) {
+      if (step === 1) {
+        log("\n$ research-toolkit search 'Quantum Algorithms'");
+        appState = StateMachine.search(appState, "Quantum Algorithms");
+        render();
+        document.getElementById("partialStep2Btn").disabled = false;
+      } else if (step === 2) {
+        log("\n$ research-toolkit sync-notebook --allow-partial");
+        log("⚠️ Uploading 2/3 available PDFs (1 paper skipped upon user flag).");
+        appState = StateMachine.syncNotebook(appState, true);
+        render();
+        log("✅ Uploaded 2 PDFs to NotebookLM: " + appState.notebookId);
+      }
+    }
+
+    function resetState() {
+      appState = StateMachine.createInitialState();
+      render();
+      log("\n[Reset] State reset to IDLE.");
+    }
+
+    function triggerDeduplication() {
+      log("\n$ research-toolkit checkpoint --reconcile");
+      log("Scanning collection items by DOI...");
+      render();
+    }
+
+    // Initial render
+    render();
+  </script>
+</body>
+</html>
