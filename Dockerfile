@@ -32,6 +32,7 @@ RUN pip install --no-cache-dir -e .
 # Default volume mount points
 VOLUME ["/app/data", "/app/vault"]
 
-# Default entrypoint runs the CLI prototype simulator / CLI tool
-ENTRYPOINT ["python3", "scripts/prototype_cli.py"]
+# Default entrypoint runs the unified research-toolkit CLI
+ENTRYPOINT ["python3", "-m", "research_toolkit.cli"]
 CMD ["--help"]
+

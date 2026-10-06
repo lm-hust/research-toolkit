@@ -226,9 +226,85 @@ def ask(query: str, notebook_id: Optional[str]) -> None:
     click.echo("=" * 60)
 
 
+@cli.command()
+def doctor() -> None:
+    """Validate system configuration, credentials, and local storage connectivity."""
+    click.echo("\n🩺 Running Research Toolkit Diagnostic Health Check...")
+    import os
+
+    checks = []
+
+    # 1. Zotero User ID & API Key
+    z_user = os.getenv("ZOTERO_USER_ID")
+    z_key = os.getenv("ZOTERO_API_KEY")
+    z_type = os.getenv("ZOTERO_LIBRARY_TYPE", "user")
+
+    if z_user and z_key:
+        if z_type.lower() == "user":
+            checks.append(("Zotero Auth", "PASS", f"User library configured (ID: {z_user})"))
+        else:
+            checks.append(("Zotero Auth", "FAIL", f"ZOTERO_LIBRARY_TYPE='{z_type}' is invalid. Must be 'user'."))
+    else:
+        checks.append(("Zotero Auth", "WARN", "Missing ZOTERO_USER_ID or ZOTERO_API_KEY. Required for collection sync."))
+
+    # 2. Zotero Storage Directory
+    storage_dir = Path(os.getenv("ZOTERO_STORAGE_DIR") or (Path.home() / "Zotero" / "storage"))
+    if storage_dir.exists():
+        checks.append(("Zotero Storage", "PASS", f"Local directory found: {storage_dir}"))
+    else:
+        checks.append(("Zotero Storage", "INFO", f"Local directory not found at {storage_dir} (probe will create if mounted)."))
+
+    # 3. Discovery APIs
+    s2_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+    checks.append(("Semantic Scholar", "PASS" if s2_key else "INFO", "API key configured" if s2_key else "Unauthenticated rate limit (1 RPS) active."))
+
+    oa_key = os.getenv("OPENALEX_API_KEY")
+    checks.append(("OpenAlex", "PASS" if oa_key else "INFO", "API key configured" if oa_key else "Public polite pool active."))
+
+    # 4. NotebookLM / Gemini Gateway
+    nlm_auth = os.getenv("NOTEBOOKLM_AUTH_JSON")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    master_token_file = Path.home() / ".notebooklm" / "profiles" / "default" / "master_token.json"
+
+    if nlm_auth:
+        checks.append(("Synthesis Gateway", "PASS", "NOTEBOOKLM_AUTH_JSON configured."))
+    elif master_token_file.exists():
+        checks.append(("Synthesis Gateway", "PASS", f"Master token file found: {master_token_file}"))
+    elif gemini_key:
+        checks.append(("Synthesis Gateway", "PASS", "GEMINI_API_KEY configured (Gemini fallback active)."))
+    else:
+        checks.append(("Synthesis Gateway", "WARN", "No synthesis credentials found (NOTEBOOKLM_AUTH_JSON, master_token.json, or GEMINI_API_KEY)."))
+
+    # Format output
+    try:
+        from rich.console import Console
+        from rich.table import Table
+
+        console = Console()
+        table = Table(title="System Diagnostics", show_header=True)
+        table.add_column("Component", style="bold", width=20)
+        table.add_column("Status", width=8)
+        table.add_column("Details")
+        for comp, status, details in checks:
+            color = "green" if status == "PASS" else ("yellow" if status in ("WARN", "INFO") else "red")
+            table.add_row(comp, f"[{color}]{status}[/{color}]", details)
+        console.print(table)
+    except ImportError:
+        for comp, status, details in checks:
+            click.echo(f"  [{status}] {comp:20} - {details}")
+
+
+@cli.command("mcp-schema")
+def mcp_schema() -> None:
+    """Print Model Context Protocol (MCP) tool schema definitions as JSON."""
+    from research_toolkit.mcp.tools import get_tools_manifest
+    click.echo(json.dumps(get_tools_manifest(), indent=2))
+
+
 def main() -> None:
     cli()
 
 
 if __name__ == "__main__":
     main()
+
