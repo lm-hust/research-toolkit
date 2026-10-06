@@ -13,6 +13,7 @@ from typing import Optional
 
 import click
 
+from research_toolkit.discovery.query import QueryTranslator
 from research_toolkit.discovery.service import DiscoveryService
 from research_toolkit.synthesis.adapters import get_default_gateway
 from research_toolkit.zotero.manager import ZoteroManager
@@ -75,7 +76,15 @@ def cli() -> None:
 
 
 @cli.command()
-@click.argument("topic")
+@click.argument("query")
+@click.option(
+    "--topic",
+    "-t",
+    "-c",
+    "--collection",
+    default=None,
+    help="Name of target Zotero collection (default: auto slugified from query).",
+)
 @click.option(
     "--limit",
     "-k",
@@ -84,50 +93,104 @@ def cli() -> None:
     help="Number of top papers to discover and rank (default: 8).",
 )
 @click.option(
+    "--detail",
+    "-d",
+    is_flag=True,
+    default=False,
+    help="Display detailed table of retrieved paper candidates.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Output collection info and results as structured JSON.",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     default=False,
     help="Perform discovery and ranking dry-run without writing to Zotero.",
 )
-@click.option(
-    "--sync-zotero",
-    is_flag=True,
-    default=False,
-    help="Automatically insert ranked candidates into Zotero personal library collection.",
-)
-def search(topic: str, limit: int, dry_run: bool, sync_zotero: bool) -> None:
+def search(
+    query: str,
+    topic: Optional[str],
+    limit: int,
+    detail: bool,
+    as_json: bool,
+    dry_run: bool,
+) -> None:
     """Search literature and rank candidates across Semantic Scholar and OpenAlex."""
-    click.echo(f"Searching literature for: '{topic}'...")
+    if not as_json and detail:
+        click.echo(f"Searching literature for: '{query}'...")
+
     service = DiscoveryService()
-    candidates = service.search_and_rank(topic, top_k=limit)
+    candidates = service.search_and_rank(query, top_k=limit)
 
     if not candidates:
-        click.echo("No matching papers found.")
+        if as_json:
+            click.echo(json.dumps({"status": "no_results", "query": query, "count": 0}))
+        else:
+            click.echo("No matching papers found.")
         return
 
-    table_output = service.format_table(candidates)
-    click.echo(table_output)
+    # Derive collection name
+    if topic:
+        clean_topic = topic.strip().lower().replace(" ", "-")
+    else:
+        clean_topic = QueryTranslator.to_topic_slug(query)
 
-    col_name = f"research/{topic.lower().replace(' ', '-')}"
+    col_name = clean_topic if clean_topic.startswith("research/") else f"research/{clean_topic}"
+
+    # Print table if detailed view requested
+    if detail:
+        table_output = service.format_table(candidates)
+        click.echo(table_output)
 
     if dry_run:
-        click.echo(
-            f"\n[dry-run] Discovered and ranked {len(candidates)} papers. No changes committed."
-        )
+        if as_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "dry_run": True,
+                        "collection_name": col_name,
+                        "query": query,
+                        "count": len(candidates),
+                    }
+                )
+            )
+        else:
+            click.echo(
+                f"\n[dry-run] Discovered and ranked {len(candidates)} papers. No changes committed."
+            )
         return
 
-    if sync_zotero:
-        click.echo(f"\n📁 Syncing to Zotero personal library collection: '{col_name}'...")
-        zotero_mgr = ZoteroManager()
-        created = zotero_mgr.sync_candidates(col_name, candidates)
-        save_session({"active_collection": col_name, "topic": topic})
-        click.echo(f"💾 Successfully inserted {len(created)} items into '{col_name}'.")
-        click.echo("Run `research-toolkit checkpoint` to verify local full-text PDFs.")
-    else:
-        save_session({"last_search_topic": topic})
+    # Mandatory Zotero insertion
+    zotero_mgr = ZoteroManager()
+    collection, created = zotero_mgr.sync_to_collection(col_name, candidates)
+    save_session(
+        {
+            "active_collection": col_name,
+            "topic": query,
+            "collection_key": collection.key,
+            "collection_url": collection.web_url,
+        }
+    )
+
+    if as_json:
         click.echo(
-            f"\nDiscovered {len(candidates)} papers. Pass `--sync-zotero` to insert into your personal Zotero library."
+            json.dumps(
+                {
+                    "collection_id": collection.key,
+                    "collection_url": collection.web_url,
+                    "collection_name": col_name,
+                    "count": len(created),
+                }
+            )
         )
+    else:
+        click.echo(f"ID: {collection.key}")
+        click.echo(f"URL: {collection.web_url}")
 
 
 @cli.command()

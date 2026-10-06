@@ -88,6 +88,7 @@ class ZoteroClient:
                     name=c_data.get("name", name),
                     parent_collection=c_data.get("parentCollection") or None,
                     version=col.get("version", 0),
+                    user_id=self.user_id,
                 )
 
         # Create new collection
@@ -103,7 +104,7 @@ class ZoteroClient:
                 key = first.get("key", "")
             elif isinstance(first, str):
                 key = first
-        return ZoteroCollection(key=key, name=name, parent_collection=parent_key)
+        return ZoteroCollection(key=key, name=name, parent_collection=parent_key, user_id=self.user_id)
 
     def get_collection_items(
         self, collection_key: str, limit: int = 100

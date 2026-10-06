@@ -50,6 +50,7 @@ class TestZoteroClient(unittest.TestCase):
         col = client.get_or_create_collection("Graph Neural Networks")
         self.assertEqual(col.name, "Graph Neural Networks")
         self.assertEqual(col.key, "COL_123")
+        self.assertEqual(col.web_url, "https://www.zotero.org/users/12345/collections/COL_123")
 
 
 class TestZoteroManager(unittest.TestCase):

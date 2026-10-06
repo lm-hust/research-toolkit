@@ -9,18 +9,44 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from research_toolkit.discovery.query import QueryTranslator
 from research_toolkit.discovery.service import DiscoveryService
 from research_toolkit.synthesis.adapters import get_default_gateway
 from research_toolkit.zotero.manager import ZoteroManager
 
 
-def search_literature(topic: str, limit: int = 8) -> Dict[str, Any]:
-    """MCP Tool: Search Semantic Scholar and OpenAlex, deduplicate, and rank papers."""
+def search_literature(
+    topic: str,
+    limit: int = 8,
+    collection_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """MCP Tool: Search Semantic Scholar and OpenAlex, deduplicate, rank papers, and sync to Zotero."""
     service = DiscoveryService()
     candidates = service.search_and_rank(topic, top_k=limit)
+
+    if collection_name:
+        clean_topic = collection_name.strip().lower().replace(" ", "-")
+    else:
+        clean_topic = QueryTranslator.to_topic_slug(topic)
+
+    col_name = clean_topic if clean_topic.startswith("research/") else f"research/{clean_topic}"
+
+    zotero_mgr = ZoteroManager()
+    col_id = ""
+    col_url = ""
+    try:
+        collection, created = zotero_mgr.sync_to_collection(col_name, candidates)
+        col_id = collection.key
+        col_url = collection.web_url
+    except Exception:
+        pass
+
     return {
         "status": "success",
         "topic": topic,
+        "collection_name": col_name,
+        "collection_id": col_id,
+        "collection_url": col_url,
         "count": len(candidates),
         "candidates": [
             {

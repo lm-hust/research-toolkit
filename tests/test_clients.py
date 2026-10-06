@@ -106,6 +106,93 @@ class TestClients(unittest.TestCase):
         self.assertTrue(c.is_review)
         self.assertEqual(c.venue_impact, 18.5)
 
+    @patch("urllib.request.urlopen")
+    def test_semantic_scholar_filters_out_books(self, mock_urlopen):
+        """Verifies Semantic Scholar client excludes Books and BookSections."""
+        s2_response = {
+            "data": [
+                {
+                    "paperId": "book_1",
+                    "title": "Deep Learning: The Book",
+                    "publicationTypes": ["Book"],
+                },
+                {
+                    "paperId": "book_section_1",
+                    "title": "Chapter 3: Optimization",
+                    "publicationTypes": ["BookSection"],
+                },
+                {
+                    "paperId": "conf_paper_1",
+                    "title": "Attention Is All You Need",
+                    "publicationTypes": ["Conference"],
+                },
+                {
+                    "paperId": "journal_paper_1",
+                    "title": "Deep Residual Learning",
+                    "publicationTypes": ["JournalArticle"],
+                },
+            ]
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(s2_response).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        client = SemanticScholarClient()
+        results = client.search("Deep Learning")
+
+        paper_ids = [p.paper_id for p in results]
+        self.assertNotIn("book_1", paper_ids)
+        self.assertNotIn("book_section_1", paper_ids)
+        self.assertIn("conf_paper_1", paper_ids)
+        self.assertIn("journal_paper_1", paper_ids)
+
+    @patch("urllib.request.urlopen")
+    def test_openalex_filters_out_books(self, mock_urlopen):
+        """Verifies OpenAlex client excludes book, book-chapter, book-review types."""
+        oa_response = {
+            "results": [
+                {
+                    "id": "oa_book_1",
+                    "title": "Artificial Intelligence: A Modern Approach",
+                    "type": "book",
+                },
+                {
+                    "id": "oa_book_review_1",
+                    "title": "Review of AI Book",
+                    "type": "book-review",
+                },
+                {
+                    "id": "oa_chapter_1",
+                    "title": "Search Algorithms Chapter",
+                    "type": "book-chapter",
+                },
+                {
+                    "id": "oa_conf_1",
+                    "title": "Transformer Models in Robotics",
+                    "type": "proceedings-article",
+                },
+                {
+                    "id": "oa_journal_1",
+                    "title": "Advances in Neural Computation",
+                    "type": "article",
+                },
+            ]
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(oa_response).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        client = OpenAlexClient()
+        results = client.search("Artificial Intelligence")
+
+        paper_ids = [p.paper_id for p in results]
+        self.assertNotIn("oa_book_1", paper_ids)
+        self.assertNotIn("oa_book_review_1", paper_ids)
+        self.assertNotIn("oa_chapter_1", paper_ids)
+        self.assertIn("oa_conf_1", paper_ids)
+        self.assertIn("oa_journal_1", paper_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
+

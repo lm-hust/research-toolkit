@@ -49,6 +49,21 @@ class ZoteroManager:
                 return pdf
         return None
 
+    def get_or_create_collection(self, collection_name: str) -> ZoteroCollection:
+        """Retrieves or creates a Zotero collection in the personal library."""
+        return self.client.get_or_create_collection(collection_name)
+
+    def sync_to_collection(
+        self,
+        collection_name: str,
+        candidates: List[PaperCandidate],
+        auto_download_oa: bool = True,
+    ) -> Tuple[ZoteroCollection, List[Dict[str, Any]]]:
+        """Creates collection and syncs candidates, returning both collection metadata and created items."""
+        collection = self.get_or_create_collection(collection_name)
+        created_items = self.sync_candidates(collection_name, candidates, auto_download_oa=auto_download_oa)
+        return collection, created_items
+
     def _parse_author_name(self, name_str: str) -> Dict[str, str]:
         parts = name_str.strip().split()
         if len(parts) > 1:
