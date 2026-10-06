@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import logging
 import os
-import re
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from research_toolkit.discovery.dedup import Deduplicator
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.zotero.client import ZoteroClient
-from research_toolkit.zotero.models import CheckpointReport, SyncResult, ZoteroCollection, ZoteroItem
+from research_toolkit.zotero.models import (
+    CheckpointReport,
+    SyncResult,
+    ZoteroCollection,
+    ZoteroItem,
+)
 
 logger = logging.getLogger(__name__)
 

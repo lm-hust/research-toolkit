@@ -57,9 +57,10 @@ class DiscoveryService:
             return "No candidates found."
 
         try:
+            import io
+
             from rich.console import Console
             from rich.table import Table
-            import io
 
             buf = io.StringIO()
             console = Console(file=buf, force_terminal=False, color_system=None, width=120)

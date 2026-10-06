@@ -13,7 +13,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.discovery.query import QueryTranslator
