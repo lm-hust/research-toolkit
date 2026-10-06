@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Optional
 
 import click
 
 from research_toolkit.discovery.service import DiscoveryService
+from research_toolkit.synthesis.adapters import get_default_gateway
 from research_toolkit.zotero.manager import ZoteroManager
 
 logger = logging.getLogger(__name__)
@@ -128,6 +130,100 @@ def checkpoint(collection: Optional[str], status: bool) -> None:
     report = manager.scan_collection_checkpoint(col)
     output = manager.format_checkpoint_report(report)
     click.echo(output)
+
+
+@cli.command("sync-notebook")
+@click.option(
+    "--collection",
+    "-c",
+    default=None,
+    help="Target Zotero collection name or key. Defaults to active collection in session.",
+)
+@click.option(
+    "--allow-partial",
+    is_flag=True,
+    default=False,
+    help="Proceed with upload even if some PDFs are missing.",
+)
+def sync_notebook(collection: Optional[str], allow_partial: bool) -> None:
+    """Create a topic notebook in NotebookLM and upload verified local PDF sources."""
+    session = load_session()
+    col = collection or session.get("active_collection")
+    if not col:
+        click.echo("⚠️ No collection specified. Provide --collection <name-or-key>.", err=True)
+        sys.exit(1)
+
+    manager = ZoteroManager()
+    report = manager.scan_collection_checkpoint(col)
+
+    if report.missing_items and not allow_partial:
+        click.echo(
+            f"🛑 FulltextCheckpoint: {len(report.missing_items)}/{report.total_items} items lack local PDFs.\n"
+            f"Resolve missing PDFs in Zotero first, or pass --allow-partial to proceed with ready items.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if not report.ready_items:
+        click.echo("⚠️ No ready PDF files found in collection.", err=True)
+        sys.exit(1)
+
+    click.echo(f"🔄 Creating NotebookLM notebook for: '{report.collection_name}'...")
+    gw = get_default_gateway()
+    notebook = gw.create_notebook(report.collection_name)
+    click.echo(f"📓 Notebook created: ID={notebook.id} ({notebook.title})")
+
+    uploaded = []
+    for item in report.ready_items:
+        if item.pdf_path:
+            click.echo(f"  Uploading source: {item.title[:45]}...")
+            src = gw.upload_source(notebook.id, Path(item.pdf_path))
+            uploaded.append(src)
+
+    session["notebook_id"] = notebook.id
+    session["active_collection"] = col
+    save_session(session)
+    click.echo(f"✨ Successfully synced {len(uploaded)} sources to NotebookLM (ID: {notebook.id}).")
+
+
+@cli.command()
+@click.argument("query")
+@click.option(
+    "--notebook-id",
+    "-nb",
+    default=None,
+    help="Target NotebookLM notebook ID. Defaults to active notebook in session.",
+)
+def ask(query: str, notebook_id: Optional[str]) -> None:
+    """Execute source-grounded Q&A against synthesized notebook sources."""
+    session = load_session()
+    nb_id = notebook_id or session.get("notebook_id")
+    if not nb_id:
+        click.echo(
+            "⚠️ No active notebook ID found. Run `sync-notebook` first or pass --notebook-id.",
+            err=True,
+        )
+        sys.exit(1)
+
+    click.echo(f"💬 Querying notebook '{nb_id}'...")
+    gw = get_default_gateway()
+    grounded = gw.query_sources(nb_id, query)
+
+    click.echo("\n" + "=" * 60)
+    click.echo("🧠 GROUNDED SYNTHESIS ANSWER")
+    click.echo("=" * 60)
+    click.echo(grounded.answer)
+
+    if grounded.citations:
+        click.echo("\n" + "-" * 60)
+        click.echo("📌 Distilled Evidence (Verbatim Grounded Quotes):")
+        click.echo("-" * 60)
+        for idx, cit in enumerate(grounded.citations, 1):
+            src_str = cit.source_title or cit.source_id
+            offset_str = f" [offset {cit.start_offset}:{cit.end_offset}]" if cit.end_offset else ""
+            click.echo(f"{idx}. \"{cit.quote}\"")
+            click.echo(f"   Source: {src_str}{offset_str}")
+    click.echo("=" * 60)
 
 
 def main() -> None:
