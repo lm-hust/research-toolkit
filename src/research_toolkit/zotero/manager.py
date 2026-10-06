@@ -74,18 +74,8 @@ class ZoteroManager:
         for c in candidates:
             existing = self.client.find_existing_item(doi=c.doi, title=c.title)
             if existing:
-                item_key = existing.get("key", "")
-                version = existing.get("version", 0)
-                item_data = existing.get("data", {})
-                existing_cols = item_data.get("collections", [])
-                if col_key not in existing_cols:
-                    self.client.add_item_to_collection(
-                        item_key=item_key,
-                        collection_key=col_key,
-                        version=version,
-                        existing_collections=existing_cols,
-                    )
-                reused_items.append(existing)
+                if self.client.add_item_to_collection(item=existing, collection_key=col_key):
+                    reused_items.append(existing)
             else:
                 new_candidates.append(c)
 

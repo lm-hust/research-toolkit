@@ -78,7 +78,65 @@ class TestZoteroClient(unittest.TestCase):
         self.assertEqual(found["key"], "EXISTING_KEY")
 
     @patch("urllib.request.urlopen")
-    def test_add_item_to_collection(self, mock_urlopen):
+    def test_find_existing_item_no_title_fallback_when_doi_present(self, mock_urlopen):
+        """When DOI is present but not found, do not fall back to title search."""
+        client = ZoteroClient(api_key="mock_key", user_id="12345")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"[]"
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        found = client.find_existing_item(doi="10.1016/j.unknown.2023", title="GNN Overview")
+        self.assertIsNone(found)
+        # Verify urlopen called only once (for DOI), not for title
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+    @patch("urllib.request.urlopen")
+    def test_find_existing_item_by_title_when_no_doi(self, mock_urlopen):
+        """When candidate has no DOI, fall back to normalized title search."""
+        client = ZoteroClient(api_key="mock_key", user_id="12345")
+        mock_resp = MagicMock()
+        mock_items = [
+            {
+                "key": "TITLE_MATCH_KEY",
+                "version": 10,
+                "data": {
+                    "title": "Graph Attention Networks",
+                    "collections": [],
+                },
+            }
+        ]
+        mock_resp.read.return_value = json.dumps(mock_items).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        found = client.find_existing_item(doi=None, title="Graph Attention Networks")
+        self.assertIsNotNone(found)
+        self.assertEqual(found["key"], "TITLE_MATCH_KEY")
+
+    @patch("urllib.request.urlopen")
+    def test_add_item_to_collection_with_dict(self, mock_urlopen):
+        """Accepts raw item dict and appends collection."""
+        client = ZoteroClient(api_key="mock_key", user_id="12345")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"{}"
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        raw_item = {
+            "key": "ITEM_KEY_1",
+            "version": 12,
+            "data": {
+                "collections": ["COL_1"],
+            },
+        }
+
+        success = client.add_item_to_collection(item=raw_item, collection_key="COL_2")
+        self.assertTrue(success)
+        self.assertIn("COL_2", raw_item["data"]["collections"])
+
+    @patch("urllib.request.urlopen")
+    def test_add_item_to_collection_with_key(self, mock_urlopen):
         """Appends new collection to existing item collections without overwriting other fields."""
         client = ZoteroClient(api_key="mock_key", user_id="12345")
         mock_resp = MagicMock()
@@ -189,10 +247,8 @@ class TestZoteroManager(unittest.TestCase):
 
         self.assertEqual(collection.key, "COL_TARGET")
         self.mock_client.add_item_to_collection.assert_called_once_with(
-            item_key="EXISTING_ITEM_KEY",
+            item=existing_item,
             collection_key="COL_TARGET",
-            version=5,
-            existing_collections=["OLD_COL"],
         )
         self.mock_client.create_items.assert_called_once()
         created_payload = self.mock_client.create_items.call_args[0][0]
