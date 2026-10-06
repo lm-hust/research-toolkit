@@ -7,6 +7,7 @@ from research_toolkit.discovery.dedup import Deduplicator
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.discovery.ranker import Ranker
 from research_toolkit.discovery.service import DiscoveryService
+from research_toolkit.discovery.venue_registry import VenueRegistry
 
 __all__ = [
     "PaperCandidate",
@@ -15,4 +16,5 @@ __all__ = [
     "Deduplicator",
     "Ranker",
     "DiscoveryService",
+    "VenueRegistry",
 ]

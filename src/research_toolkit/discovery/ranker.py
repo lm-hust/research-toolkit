@@ -10,6 +10,7 @@ import math
 from typing import List, Optional
 
 from research_toolkit.discovery.models import PaperCandidate
+from research_toolkit.discovery.venue_registry import VenueRegistry
 
 
 class Ranker:
@@ -28,6 +29,7 @@ class Ranker:
         i_cap: float = 15.0,
         if_cap: float = 20.0,
         beta_review: float = 0.20,
+        venue_registry: Optional[VenueRegistry] = None,
     ):
         self.current_year = current_year
         self.w_rel = w_rel
@@ -37,6 +39,7 @@ class Ranker:
         self.i_cap = i_cap
         self.if_cap = if_cap
         self.beta_review = beta_review
+        self.venue_registry = venue_registry if venue_registry is not None else VenueRegistry()
 
     def score(self, p: PaperCandidate) -> float:
         age = max(self.current_year - (p.year or self.current_year), 1)
@@ -52,11 +55,15 @@ class Ranker:
         else:
             s_cite = s_cite_raw
 
-        # 2. Venue quality (OpenAlex 2-yr citedness proxy for JCR IF)
-        if p.venue_impact > 0:
-            s_venue = min(1.0, math.log1p(p.venue_impact) / math.log1p(self.if_cap))
+        # 2. Venue quality (max of OpenAlex 2-yr citedness and offline VenueRegistry impact)
+        local_impact = self.venue_registry.get_impact(p.venue) if self.venue_registry else 0.0
+        effective_impact = max(p.venue_impact, local_impact)
+        if effective_impact > 0:
+            p.venue_impact = effective_impact
+            s_venue = min(1.0, math.log1p(effective_impact) / math.log1p(self.if_cap))
         else:
             s_venue = 0.15  # Baseline for unindexed preprint/unknown venue
+
 
         # 3. Review paper boost with age decay
         b_review = 0.0

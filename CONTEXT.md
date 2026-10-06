@@ -18,6 +18,11 @@ _Avoid_: Survey paper, overview doc
 The scoring component that computes composite weightings across citation count, journal impact proxy (OpenAlex 2-year citedness / JCR lookup), and review tier.
 _Avoid_: Sorter, filter
 
+**VenueRegistry**:
+The offline repository of top-tier academic journals (Nature, Science, IEEE Trans) and premier computer science conferences (NeurIPS, CVPR, ICLR), mapping aliases to standardized impact factor metrics.
+_Avoid_: Journal list, conference DB
+
+
 ### Literature Management
 
 **ZoteroCollection**:
