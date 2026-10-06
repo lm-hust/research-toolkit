@@ -44,6 +44,8 @@ def search_literature(
         "collection_id": col_id,
         "collection_url": col_url,
         "count": len(candidates),
+        "created_count": getattr(created, "created_count", len(candidates)) if "created" in locals() else 0,
+        "reused_count": getattr(created, "reused_count", 0) if "created" in locals() else 0,
         "candidates": [
             {
                 "paper_id": c.paper_id,

@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from research_toolkit.discovery.dedup import Deduplicator
 from research_toolkit.zotero.models import ZoteroCollection
 
 logger = logging.getLogger(__name__)
@@ -147,3 +148,64 @@ class ZoteroClient:
         ]
         res = self.create_items(payload)
         return res[0] if res else {}
+
+    def find_existing_item(
+        self, doi: Optional[str] = None, title: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Searches the personal Zotero library for an existing item matching DOI or normalized title.
+        Returns the raw item dict if found, else None.
+        """
+        clean_doi = Deduplicator.clean_doi(doi) if doi else ""
+        if clean_doi:
+            items = self._request("GET", "/items", params={"q": clean_doi, "itemType": "-attachment", "limit": 10})
+            if isinstance(items, list):
+                for it in items:
+                    it_data = it.get("data", {})
+                    it_doi = Deduplicator.clean_doi(it_data.get("DOI"))
+                    if it_doi and it_doi == clean_doi:
+                        return it
+
+        # Fallback to normalized title match
+        if title:
+            norm_title = Deduplicator.clean_title(title)
+            if norm_title:
+                items = self._request("GET", "/items", params={"q": title[:50], "itemType": "-attachment", "limit": 10})
+                if isinstance(items, list):
+                    for it in items:
+                        it_data = it.get("data", {})
+                        it_title = Deduplicator.clean_title(it_data.get("title", ""))
+                        if it_title and it_title == norm_title:
+                            return it
+
+        return None
+
+    def add_item_to_collection(
+        self,
+        item_key: str,
+        collection_key: str,
+        version: int,
+        existing_collections: Optional[List[str]] = None,
+    ) -> bool:
+        """
+        Appends collection_key to an existing item's collections list without altering other fields.
+        Uses Zotero PATCH /items/<item_key> with If-Unmodified-Since-Version header.
+        """
+        current_cols = list(existing_collections or [])
+        if collection_key in current_cols:
+            return True  # Already belongs to target collection
+
+        current_cols.append(collection_key)
+        payload = {"collections": current_cols}
+        headers = self._headers()
+        headers["If-Unmodified-Since-Version"] = str(version)
+
+        full_url = self.url(f"/items/{item_key}")
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(full_url, data=data, headers=headers, method="PATCH")
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return True
+        except Exception as e:
+            logger.warning("Failed to add item %s to collection %s: %s", item_key, collection_key, e)
+            return False

@@ -4,6 +4,7 @@ Unit tests for Zotero Personal Library Sync, PDF resolution, duplicate reconcili
 and FulltextCheckpoint.
 """
 
+import json
 import os
 import shutil
 import tempfile
@@ -51,6 +52,47 @@ class TestZoteroClient(unittest.TestCase):
         self.assertEqual(col.name, "Graph Neural Networks")
         self.assertEqual(col.key, "COL_123")
         self.assertEqual(col.web_url, "https://www.zotero.org/users/12345/collections/COL_123")
+
+    @patch("urllib.request.urlopen")
+    def test_find_existing_item_by_doi(self, mock_urlopen):
+        """Finds existing item in library matching normalized DOI."""
+        client = ZoteroClient(api_key="mock_key", user_id="12345")
+        mock_resp = MagicMock()
+        mock_items = [
+            {
+                "key": "EXISTING_KEY",
+                "version": 10,
+                "data": {
+                    "title": "GNN Overview",
+                    "DOI": "10.1016/j.gnn.2023",
+                    "collections": ["COL_A"],
+                },
+            }
+        ]
+        mock_resp.read.return_value = json.dumps(mock_items).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        found = client.find_existing_item(doi="https://doi.org/10.1016/j.gnn.2023")
+        self.assertIsNotNone(found)
+        self.assertEqual(found["key"], "EXISTING_KEY")
+
+    @patch("urllib.request.urlopen")
+    def test_add_item_to_collection(self, mock_urlopen):
+        """Appends new collection to existing item collections without overwriting other fields."""
+        client = ZoteroClient(api_key="mock_key", user_id="12345")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"{}"
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        success = client.add_item_to_collection(
+            item_key="EXISTING_KEY",
+            collection_key="NEW_COL",
+            version=10,
+            existing_collections=["COL_A"],
+        )
+        self.assertTrue(success)
 
 
 class TestZoteroManager(unittest.TestCase):
@@ -103,6 +145,63 @@ class TestZoteroManager(unittest.TestCase):
         self.assertEqual(item_data["url"], "https://doi.org/10.48550/arxiv.1710.10903")
         self.assertNotIn("libproxy.ucl.ac.uk", item_data["url"])
         self.assertIn("COL_123", item_data["collections"])
+
+    def test_sync_to_collection_reuses_existing_items(self):
+        """If a candidate already exists in Zotero, it is appended to collection without duplicating."""
+        col = ZoteroCollection(key="COL_TARGET", name="GNN Research", user_id="12345")
+        self.mock_client.get_or_create_collection.return_value = col
+
+        existing_item = {
+            "key": "EXISTING_ITEM_KEY",
+            "version": 5,
+            "data": {
+                "title": "Existing GNN Paper",
+                "DOI": "10.1000/existing",
+                "collections": ["OLD_COL"],
+            },
+        }
+
+        def mock_find(doi=None, title=None):
+            if doi and "10.1000/existing" in doi:
+                return existing_item
+            return None
+
+        self.mock_client.find_existing_item.side_effect = mock_find
+        self.mock_client.add_item_to_collection.return_value = True
+        self.mock_client.create_items.return_value = [{"key": "NEW_ITEM_KEY"}]
+
+        cand_existing = PaperCandidate(
+            paper_id="p1",
+            title="Existing GNN Paper",
+            doi="10.1000/existing",
+        )
+        cand_new = PaperCandidate(
+            paper_id="p2",
+            title="Brand New Paper",
+            doi="10.1000/brand_new",
+        )
+
+        collection, result = self.manager.sync_to_collection(
+            collection_name="GNN Research",
+            candidates=[cand_existing, cand_new],
+            auto_download_oa=False,
+        )
+
+        self.assertEqual(collection.key, "COL_TARGET")
+        self.mock_client.add_item_to_collection.assert_called_once_with(
+            item_key="EXISTING_ITEM_KEY",
+            collection_key="COL_TARGET",
+            version=5,
+            existing_collections=["OLD_COL"],
+        )
+        self.mock_client.create_items.assert_called_once()
+        created_payload = self.mock_client.create_items.call_args[0][0]
+        self.assertEqual(len(created_payload), 1)
+        self.assertEqual(created_payload[0]["DOI"], "10.1000/brand_new")
+
+        self.assertEqual(result.created_count, 1)
+        self.assertEqual(result.reused_count, 1)
+        self.assertEqual(result.total_count, 2)
 
     def test_local_storage_pdf_probing(self):
         """Verifies local ~/Zotero/storage/<key>/*.pdf detection."""

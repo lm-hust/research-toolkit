@@ -199,6 +199,8 @@ def search(
             "collection_url": collection.web_url,
             "collection_name": col_name,
             "count": len(created),
+            "created_count": getattr(created, "created_count", len(created)),
+            "reused_count": getattr(created, "reused_count", 0),
         }
         if detail:
             payload["candidates"] = [

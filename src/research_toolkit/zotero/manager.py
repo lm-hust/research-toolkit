@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from research_toolkit.discovery.dedup import Deduplicator
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.zotero.client import ZoteroClient
-from research_toolkit.zotero.models import CheckpointReport, ZoteroCollection, ZoteroItem
+from research_toolkit.zotero.models import CheckpointReport, SyncResult, ZoteroCollection, ZoteroItem
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +58,55 @@ class ZoteroManager:
         collection_name: str,
         candidates: List[PaperCandidate],
         auto_download_oa: bool = True,
-    ) -> Tuple[ZoteroCollection, List[Dict[str, Any]]]:
-        """Creates collection and syncs candidates, returning both collection metadata and created items."""
+    ) -> Tuple[ZoteroCollection, SyncResult]:
+        """
+        Creates/gets collection and syncs candidates.
+        If a paper already exists in the Zotero library (matched by canonical DOI or title),
+        it appends the target collection to the existing item without creating duplicates.
+        New papers are batch created with OA attachments.
+        """
         collection = self.get_or_create_collection(collection_name)
-        created_items = self.sync_candidates(collection_name, candidates, auto_download_oa=auto_download_oa)
-        return collection, created_items
+        col_key = collection.key
+
+        new_candidates: List[PaperCandidate] = []
+        reused_items: List[Dict[str, Any]] = []
+
+        for c in candidates:
+            existing = self.client.find_existing_item(doi=c.doi, title=c.title)
+            if existing:
+                item_key = existing.get("key", "")
+                version = existing.get("version", 0)
+                item_data = existing.get("data", {})
+                existing_cols = item_data.get("collections", [])
+                if col_key not in existing_cols:
+                    self.client.add_item_to_collection(
+                        item_key=item_key,
+                        collection_key=col_key,
+                        version=version,
+                        existing_collections=existing_cols,
+                    )
+                reused_items.append(existing)
+            else:
+                new_candidates.append(c)
+
+        created_items: List[Dict[str, Any]] = []
+        if new_candidates:
+            created_items = self.sync_candidates(
+                collection_name=collection_name,
+                candidates=new_candidates,
+                auto_download_oa=auto_download_oa,
+            )
+
+        sync_result = SyncResult(
+            collection_key=col_key,
+            collection_name=collection.name,
+            collection_url=collection.web_url,
+            created_count=len(created_items),
+            reused_count=len(reused_items),
+            created_items=created_items,
+            reused_items=reused_items,
+        )
+        return collection, sync_result
 
     def _parse_author_name(self, name_str: str) -> Dict[str, str]:
         parts = name_str.strip().split()
