@@ -90,6 +90,14 @@ class SemanticScholarClient:
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                logger.info(
+                    "Semantic Scholar unauthenticated pool rate limit (HTTP 429). Gracefully falling back to OpenAlex."
+                )
+            else:
+                logger.warning("Semantic Scholar search failed: %s", e)
+            return []
         except Exception as e:
             logger.warning("Semantic Scholar search failed: %s", e)
             return []

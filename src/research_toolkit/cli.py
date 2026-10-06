@@ -170,8 +170,20 @@ def search(
         return
 
     # Mandatory Zotero insertion
-    zotero_mgr = ZoteroManager()
-    collection, created = zotero_mgr.sync_to_collection(col_name, candidates)
+    try:
+        zotero_mgr = ZoteroManager()
+        collection, created = zotero_mgr.sync_to_collection(col_name, candidates)
+    except ValueError as e:
+        if as_json:
+            click.echo(
+                json.dumps({"status": "error", "error_type": "auth_missing", "message": str(e)}),
+                err=True,
+            )
+        else:
+            click.echo(f"\n⚠️  Zotero 配置错误: {e}", err=True)
+            click.echo("💡 提示: 若需本地预览文献检索与排序，可使用 `--dry-run`；若需入库，请在 .env 中配置 ZOTERO_USER_ID 与 ZOTERO_API_KEY。", err=True)
+        sys.exit(1)
+
     save_session(
         {
             "active_collection": col_name,

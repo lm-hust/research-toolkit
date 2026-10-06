@@ -60,6 +60,16 @@ class ZoteroClient:
     def _request(
         self, method: str, path: str, payload: Optional[Any] = None, params: Optional[Dict[str, Any]] = None
     ) -> Any:
+        if not self.user_id:
+            raise ValueError(
+                "Missing Zotero User ID. Please set ZOTERO_USER_ID in your .env or environment. "
+                "Run `research-toolkit doctor` to inspect system configuration."
+            )
+        if not self.api_key:
+            raise ValueError(
+                "Missing Zotero API Key. Please set ZOTERO_API_KEY in your .env or environment."
+            )
+
         full_url = self.url(path)
         if params:
             full_url = f"{full_url}?{urllib.parse.urlencode(params)}"
