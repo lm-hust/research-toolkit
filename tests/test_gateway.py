@@ -141,8 +141,10 @@ class TestGatewayFactory(unittest.TestCase):
 
     def test_falls_back_to_gemini_when_only_gemini_key_present(self):
         with patch.dict(os.environ, {"GEMINI_API_KEY": "AIza123"}, clear=True):
-            gw = get_default_gateway()
-            self.assertIsInstance(gw, GeminiGroundingFallbackAdapter)
+            with patch.object(NotebookLMPyAdapter, "is_configured", return_value=False):
+                gw = get_default_gateway()
+                self.assertIsInstance(gw, GeminiGroundingFallbackAdapter)
+
 
 
 if __name__ == "__main__":

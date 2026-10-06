@@ -22,6 +22,35 @@ logger = logging.getLogger(__name__)
 STATE_FILE = Path.home() / ".cache" / "research-toolkit" / "session.json"
 
 
+def load_env_file(path: Optional[Path] = None) -> None:
+    """Loads environment variables from .env file into os.environ if present."""
+    import os
+
+    env_file = path or (Path.cwd() / ".env")
+    if not env_file.is_file():
+        env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+        if not env_file.is_file():
+            return
+    try:
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            if len(v) >= 2 and ((v[0] == "'" and v[-1] == "'") or (v[0] == '"' and v[-1] == '"')):
+                v = v[1:-1]
+            if k and k not in os.environ:
+                os.environ[k] = v
+    except Exception as e:
+        logger.debug("Failed to auto-load .env: %s", e)
+
+
+load_env_file()
+
+
+
 def load_session() -> dict:
     if not STATE_FILE.exists():
         return {}
