@@ -13,9 +13,10 @@ import re
 import time
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from research_toolkit.discovery.models import PaperCandidate
+from research_toolkit.discovery.query import QueryTranslator
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,17 @@ REVIEW_KEYWORD_REGEX = re.compile(
     r"\b(review|survey|systematic review|meta-analysis|overview|progress in)\b",
     re.IGNORECASE,
 )
+
+EXCLUDED_OPENALEX_TYPES = {
+    "book",
+    "book-chapter",
+    "book-review",
+    "book-section",
+    "book-series",
+    "dataset",
+    "paratext",
+    "erratum",
+}
 
 
 def reconstruct_openalex_abstract(inverted_index: Optional[Dict[str, List[int]]]) -> str:
@@ -58,12 +70,13 @@ class SemanticScholarClient:
 
     def search(self, query: str, limit: int = 10, offset: int = 0) -> List[PaperCandidate]:
         self._throttle()
+        clean_query = QueryTranslator.to_semantic_scholar(query) or query
         fields = (
             "paperId,title,abstract,year,citationCount,influentialCitationCount,"
             "publicationTypes,openAccessPdf,externalIds,venue,journal,authors"
         )
         params = {
-            "query": query,
+            "query": clean_query,
             "limit": limit,
             "offset": offset,
             "fields": fields,
@@ -77,6 +90,14 @@ class SemanticScholarClient:
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                logger.info(
+                    "Semantic Scholar unauthenticated pool rate limit (HTTP 429). Gracefully falling back to OpenAlex."
+                )
+            else:
+                logger.warning("Semantic Scholar search failed: %s", e)
+            return []
         except Exception as e:
             logger.warning("Semantic Scholar search failed: %s", e)
             return []
@@ -84,6 +105,9 @@ class SemanticScholarClient:
         candidates: List[PaperCandidate] = []
         for item in data.get("data", []):
             pub_types = item.get("publicationTypes") or []
+            if any("book" in pt.lower() for pt in pub_types):
+                continue
+
             title = item.get("title") or "Untitled"
             is_rev = "Review" in pub_types or bool(REVIEW_KEYWORD_REGEX.search(title))
 
@@ -130,8 +154,9 @@ class OpenAlexClient:
         self.api_key = api_key or os.getenv("OPENALEX_API_KEY")
 
     def search(self, query: str, limit: int = 10) -> List[PaperCandidate]:
+        clean_query = QueryTranslator.to_openalex(query) or query
         params = {
-            "search": query,
+            "search": clean_query,
             "per_page": limit,
             "select": (
                 "id,doi,title,abstract_inverted_index,cited_by_count,"
@@ -154,8 +179,11 @@ class OpenAlexClient:
 
         candidates: List[PaperCandidate] = []
         for item in data.get("results", []):
-            title = item.get("title") or "Untitled"
             work_type = (item.get("type") or "").lower()
+            if work_type in EXCLUDED_OPENALEX_TYPES or work_type.startswith("book"):
+                continue
+
+            title = item.get("title") or "Untitled"
             is_rev = work_type == "review" or bool(REVIEW_KEYWORD_REGEX.search(title))
 
             abstract = reconstruct_openalex_abstract(item.get("abstract_inverted_index"))

@@ -33,8 +33,9 @@ class TestMcpTools(unittest.TestCase):
         self.assertIn("properties", search_tool["parameters"])
         self.assertIn("topic", search_tool["parameters"]["properties"])
 
+    @patch("research_toolkit.mcp.tools.ZoteroManager")
     @patch("research_toolkit.mcp.tools.DiscoveryService")
-    def test_search_literature_tool(self, mock_service_cls):
+    def test_search_literature_tool(self, mock_service_cls, mock_mgr_cls):
         mock_service = MagicMock()
         mock_service_cls.return_value = mock_service
         mock_service.search_and_rank.return_value = [
@@ -47,9 +48,18 @@ class TestMcpTools(unittest.TestCase):
                 is_review=False,
             )
         ]
+        mock_mgr = MagicMock()
+        mock_mgr_cls.return_value = mock_mgr
+        from research_toolkit.zotero.models import ZoteroCollection
+        mock_mgr.sync_to_collection.return_value = (
+            ZoteroCollection(key="COL_MCP_1", name="research/gnn", user_id="12345"),
+            [{"key": "it1"}]
+        )
 
         result = search_literature("GNN", limit=5)
         self.assertEqual(result["status"], "success")
+        self.assertEqual(result["collection_id"], "COL_MCP_1")
+        self.assertEqual(result["collection_url"], "https://www.zotero.org/users/12345/collections/COL_MCP_1")
         self.assertEqual(len(result["candidates"]), 1)
         self.assertEqual(result["candidates"][0]["title"], "Graph Attention Networks")
 

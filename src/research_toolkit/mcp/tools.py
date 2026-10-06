@@ -9,19 +9,43 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from research_toolkit.discovery.query import QueryTranslator
 from research_toolkit.discovery.service import DiscoveryService
 from research_toolkit.synthesis.adapters import get_default_gateway
 from research_toolkit.zotero.manager import ZoteroManager
 
 
-def search_literature(topic: str, limit: int = 8) -> Dict[str, Any]:
-    """MCP Tool: Search Semantic Scholar and OpenAlex, deduplicate, and rank papers."""
+def search_literature(
+    topic: str,
+    limit: int = 8,
+    collection_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """MCP Tool: Search Semantic Scholar and OpenAlex, deduplicate, rank papers, and sync to Zotero."""
     service = DiscoveryService()
     candidates = service.search_and_rank(topic, top_k=limit)
-    return {
+
+    col_name = QueryTranslator.to_collection_name(topic, collection_name)
+
+    zotero_mgr = ZoteroManager()
+    col_id = ""
+    col_url = ""
+    sync_error = None
+    try:
+        collection, created = zotero_mgr.sync_to_collection(col_name, candidates)
+        col_id = collection.key
+        col_url = collection.web_url
+    except Exception as e:
+        sync_error = str(e)
+
+    res: Dict[str, Any] = {
         "status": "success",
         "topic": topic,
+        "collection_name": col_name,
+        "collection_id": col_id,
+        "collection_url": col_url,
         "count": len(candidates),
+        "created_count": getattr(created, "created_count", len(candidates)) if "created" in locals() else 0,
+        "reused_count": getattr(created, "reused_count", 0) if "created" in locals() else 0,
         "candidates": [
             {
                 "paper_id": c.paper_id,
@@ -38,6 +62,9 @@ def search_literature(topic: str, limit: int = 8) -> Dict[str, Any]:
             for c in candidates
         ],
     }
+    if sync_error:
+        res["sync_error"] = sync_error
+    return res
 
 
 def verify_checkpoint(collection: str) -> Dict[str, Any]:
@@ -126,12 +153,13 @@ def get_tools_manifest() -> List[Dict[str, Any]]:
     return [
         {
             "name": "search_literature",
-            "description": "Multi-source academic discovery across Semantic Scholar and OpenAlex with composite ranking and review quota.",
+            "description": "Multi-source academic discovery across Semantic Scholar and OpenAlex with composite ranking and automatic Zotero collection insertion.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "topic": {"type": "string", "description": "Research subject or query string"},
                     "limit": {"type": "integer", "description": "Number of top papers to select", "default": 8},
+                    "collection_name": {"type": "string", "description": "Optional custom Zotero collection name"},
                 },
                 "required": ["topic"],
             },

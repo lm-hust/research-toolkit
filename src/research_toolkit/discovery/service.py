@@ -57,11 +57,13 @@ class DiscoveryService:
             return "No candidates found."
 
         try:
-            from rich.console import Console
-            from rich.table import Table
             import io
 
-            console = Console(file=io.StringIO(), force_terminal=False, color_system=None, width=120)
+            from rich.console import Console
+            from rich.table import Table
+
+            buf = io.StringIO()
+            console = Console(file=buf, force_terminal=False, color_system=None, width=120)
             table = Table(title="Literature Discovery Candidates", show_header=True, header_style="bold")
             table.add_column("Rank", justify="right", style="cyan", width=5)
             table.add_column("Type", justify="center", width=6)
@@ -89,7 +91,7 @@ class DiscoveryService:
                 )
 
             console.print(table)
-            return console.file.getvalue()
+            return buf.getvalue()
         except ImportError:
             # Fallback plain ASCII table
             headers = ["#", "Type", "Title", "Year", "Cites", "Score", "DOI"]

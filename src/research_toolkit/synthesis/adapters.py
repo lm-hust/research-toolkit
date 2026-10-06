@@ -215,7 +215,7 @@ class GeminiGroundingFallbackAdapter:
                     DistilledEvidence(
                         quote=quote,
                         source_id=notebook_id,
-                        source_title=f"Grounded Source",
+                        source_title="Grounded Source",
                         start_offset=start,
                         end_offset=end,
                     )
