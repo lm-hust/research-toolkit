@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  toolkit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: research-toolkit:latest
+    container_name: research_toolkit
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persistent cache, downloaded PDFs, and local state
+      - ./data:/app/data
+      - toolkit-cache:/root/.cache/research-toolkit
+      # Optional: mount host Obsidian vault (read/write)
+      # - /home/ling/vault/PKM:/app/vault
+    stdin_open: true
+    tty: true
+    # For interactive CLI execution:
+    # docker compose run --rm toolkit search "Graph Neural Networks"
+    # docker compose run --rm toolkit checkpoint
+    # docker compose run --rm toolkit sync-notebook
+    # docker compose run --rm toolkit ask "Summarize the key findings"
+
+volumes:
+  toolkit-cache:
