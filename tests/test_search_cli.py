@@ -95,6 +95,27 @@ class TestSearchCli(unittest.TestCase):
 
     @patch("research_toolkit.cli.ZoteroManager")
     @patch("research_toolkit.cli.DiscoveryService")
+    def test_search_with_detail_and_json_outputs_valid_json(self, mock_service_cls, mock_zotero_cls):
+        mock_service = MagicMock()
+        mock_service_cls.return_value = mock_service
+        mock_service.search_and_rank.return_value = [self.mock_candidate]
+
+        mock_zotero = MagicMock()
+        mock_zotero_cls.return_value = mock_zotero
+        mock_zotero.sync_to_collection.return_value = (self.mock_col, [{"key": "ITEM_1"}])
+
+        result = self.runner.invoke(cli, ["search", "Graph Neural Networks", "--detail", "--json"])
+
+        self.assertEqual(result.exit_code, 0)
+        # Must be cleanly parseable as JSON without ASCII table pollution
+        data = json.loads(result.output.strip())
+        self.assertEqual(data["collection_id"], "COL_GNN_123")
+        self.assertIn("candidates", data)
+        self.assertEqual(len(data["candidates"]), 1)
+        self.assertEqual(data["candidates"][0]["title"], "A Comprehensive Survey of GNNs")
+
+    @patch("research_toolkit.cli.ZoteroManager")
+    @patch("research_toolkit.cli.DiscoveryService")
     def test_search_custom_topic_and_slugification(self, mock_service_cls, mock_zotero_cls):
         mock_service = MagicMock()
         mock_service_cls.return_value = mock_service

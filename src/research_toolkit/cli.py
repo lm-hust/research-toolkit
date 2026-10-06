@@ -134,31 +134,35 @@ def search(
             click.echo("No matching papers found.")
         return
 
-    # Derive collection name
-    if topic:
-        clean_topic = topic.strip().lower().replace(" ", "-")
-    else:
-        clean_topic = QueryTranslator.to_topic_slug(query)
+    # Derive canonical ZoteroCollection name
+    col_name = QueryTranslator.to_collection_name(query, topic)
 
-    col_name = clean_topic if clean_topic.startswith("research/") else f"research/{clean_topic}"
-
-    # Print table if detailed view requested
-    if detail:
+    # Print table if detailed view requested and not JSON mode
+    if detail and not as_json:
         table_output = service.format_table(candidates)
         click.echo(table_output)
 
     if dry_run:
         if as_json:
-            click.echo(
-                json.dumps(
+            payload = {
+                "dry_run": True,
+                "collection_name": col_name,
+                "query": query,
+                "count": len(candidates),
+            }
+            if detail:
+                payload["candidates"] = [
                     {
-                        "dry_run": True,
-                        "collection_name": col_name,
-                        "query": query,
-                        "count": len(candidates),
+                        "paper_id": c.paper_id,
+                        "title": c.title,
+                        "year": c.year,
+                        "venue": c.venue,
+                        "doi": c.doi,
+                        "composite_score": c.composite_score,
                     }
-                )
-            )
+                    for c in candidates
+                ]
+            click.echo(json.dumps(payload, indent=2))
         else:
             click.echo(
                 f"\n[dry-run] Discovered and ranked {len(candidates)} papers. No changes committed."
@@ -178,16 +182,25 @@ def search(
     )
 
     if as_json:
-        click.echo(
-            json.dumps(
+        payload = {
+            "collection_id": collection.key,
+            "collection_url": collection.web_url,
+            "collection_name": col_name,
+            "count": len(created),
+        }
+        if detail:
+            payload["candidates"] = [
                 {
-                    "collection_id": collection.key,
-                    "collection_url": collection.web_url,
-                    "collection_name": col_name,
-                    "count": len(created),
+                    "paper_id": c.paper_id,
+                    "title": c.title,
+                    "year": c.year,
+                    "venue": c.venue,
+                    "doi": c.doi,
+                    "composite_score": c.composite_score,
                 }
-            )
-        )
+                for c in candidates
+            ]
+        click.echo(json.dumps(payload, indent=2))
     else:
         click.echo(f"ID: {collection.key}")
         click.echo(f"URL: {collection.web_url}")

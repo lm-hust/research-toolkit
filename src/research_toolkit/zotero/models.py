@@ -22,8 +22,6 @@ class ZoteroCollection:
     def web_url(self) -> str:
         if self.user_id and self.key:
             return f"https://www.zotero.org/users/{self.user_id}/collections/{self.key}"
-        if self.key:
-            return f"https://www.zotero.org/collections/{self.key}"
         return ""
 
 

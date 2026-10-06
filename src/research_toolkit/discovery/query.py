@@ -6,6 +6,7 @@ Query parsing and cross-platform translation for Semantic Scholar and OpenAlex.
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 
 class QueryTranslator:
@@ -16,16 +17,19 @@ class QueryTranslator:
         """
         Translates query for Semantic Scholar /paper/search relevance endpoint.
         S2 does not support boolean operators (AND/OR/NOT) or parentheses.
-        Extracts quoted phrases and keywords while stripping boolean keywords and syntax symbols.
+        Extracts quoted phrases and keywords while stripping boolean keywords, negated terms, and syntax symbols.
         """
         if not query:
             return ""
 
-        # Remove parentheses
-        text = re.sub(r"[()]", " ", query)
+        # Remove negated clauses: NOT "phrase" or NOT term
+        text = re.sub(r'\bNOT\s+("[^"]+"|\S+)', ' ', query, flags=re.IGNORECASE)
 
-        # Remove boolean keywords at word boundaries
-        text = re.sub(r"\b(AND|OR|NOT)\b", " ", text)
+        # Remove parentheses
+        text = re.sub(r"[()]", " ", text)
+
+        # Remove remaining boolean operators (AND, OR)
+        text = re.sub(r"\b(AND|OR)\b", " ", text, flags=re.IGNORECASE)
 
         # Extract tokens while preserving quoted phrases
         tokens = []
@@ -43,19 +47,28 @@ class QueryTranslator:
     def to_openalex(query: str) -> str:
         """
         Translates query for OpenAlex works search.
-        OpenAlex supports phrase quotes and basic text search.
+        OpenAlex supports phrase quotes and space-separated term search.
+        Removes negation and boolean connector keywords to prevent literal matching.
         """
         if not query:
             return ""
+
+        # Remove negated clauses: NOT "phrase" or NOT term
+        text = re.sub(r'\bNOT\s+("[^"]+"|\S+)', ' ', query, flags=re.IGNORECASE)
+
         # Clean up stray/unbalanced parentheses
-        cleaned = re.sub(r"[()]", " ", query)
+        text = re.sub(r"[()]", " ", text)
+
+        # Remove boolean connectors
+        text = re.sub(r"\b(AND|OR)\b", " ", text, flags=re.IGNORECASE)
+
         # Collapse multiple spaces
-        return re.sub(r"\s+", " ", cleaned).strip()
+        return re.sub(r"\s+", " ", text).strip()
 
     @staticmethod
     def to_topic_slug(query: str) -> str:
         """
-        Extracts a clean, URL- and folder-friendly topic slug from a complex query expression.
+        Extracts a clean, URL- and collection-friendly topic slug from a complex query expression.
         Strips quotes, boolean operators, and special characters.
         """
         if not query:
@@ -69,6 +82,18 @@ class QueryTranslator:
         text = re.sub(r"[^\w\s-]", " ", text)
         # Convert to lowercase and split
         words = [w.lower() for w in text.split() if w]
-        slug = "-".join(words[:6])  # limit to top 6 terms for clean folder naming
+        slug = "-".join(words[:6])  # limit to top 6 terms for clean ZoteroCollection naming
         slug = re.sub(r"-+", "-", slug).strip("-")
         return slug or "literature"
+
+    @classmethod
+    def to_collection_name(cls, query: str, topic: Optional[str] = None) -> str:
+        """
+        Derives the canonical ZoteroCollection name prefixed with research/.
+        Uses explicit topic if provided, otherwise derives slug from query.
+        """
+        if topic:
+            clean = topic.strip().lower().replace(" ", "-")
+        else:
+            clean = cls.to_topic_slug(query)
+        return clean if clean.startswith("research/") else f"research/{clean}"

@@ -24,24 +24,20 @@ def search_literature(
     service = DiscoveryService()
     candidates = service.search_and_rank(topic, top_k=limit)
 
-    if collection_name:
-        clean_topic = collection_name.strip().lower().replace(" ", "-")
-    else:
-        clean_topic = QueryTranslator.to_topic_slug(topic)
-
-    col_name = clean_topic if clean_topic.startswith("research/") else f"research/{clean_topic}"
+    col_name = QueryTranslator.to_collection_name(topic, collection_name)
 
     zotero_mgr = ZoteroManager()
     col_id = ""
     col_url = ""
+    sync_error = None
     try:
         collection, created = zotero_mgr.sync_to_collection(col_name, candidates)
         col_id = collection.key
         col_url = collection.web_url
-    except Exception:
-        pass
+    except Exception as e:
+        sync_error = str(e)
 
-    return {
+    res: Dict[str, Any] = {
         "status": "success",
         "topic": topic,
         "collection_name": col_name,
@@ -64,6 +60,9 @@ def search_literature(
             for c in candidates
         ],
     }
+    if sync_error:
+        res["sync_error"] = sync_error
+    return res
 
 
 def verify_checkpoint(collection: str) -> Dict[str, Any]:
@@ -152,12 +151,13 @@ def get_tools_manifest() -> List[Dict[str, Any]]:
     return [
         {
             "name": "search_literature",
-            "description": "Multi-source academic discovery across Semantic Scholar and OpenAlex with composite ranking and review quota.",
+            "description": "Multi-source academic discovery across Semantic Scholar and OpenAlex with composite ranking and automatic Zotero collection insertion.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "topic": {"type": "string", "description": "Research subject or query string"},
                     "limit": {"type": "integer", "description": "Number of top papers to select", "default": 8},
+                    "collection_name": {"type": "string", "description": "Optional custom Zotero collection name"},
                 },
                 "required": ["topic"],
             },
