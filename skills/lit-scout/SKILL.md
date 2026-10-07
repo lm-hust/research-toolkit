@@ -46,9 +46,13 @@ When invoked, the agent executes four sequential steps:
   | Target collection (e.g., "存入集合 llm-eval") | `--topic <name>` | Auto slug `cimo-<intervention>` |
   | Sorting mode: "经典/高被引/奠基性文献" | `--sort citations` | `--sort composite` (balanced) |
   | Sorting mode: "最新进展/近年/前沿探索" | `--sort recent` | `--sort composite` (balanced) |
+  | Sorting mode: "引文拓扑/共引重合/核心网络" | `--sort topological` | `--sort composite` (balanced) |
   | Citation threshold: "被引至少 50 次", "过滤低引" | `--min-cites <N>` | `0` (no minimum) |
   | Publication channel: "只要正式发表/期刊会议", "不要预印本/不要arxiv" | `--peer-reviewed` | Include preprints |
   | Publication year: "2023年以后", "近三年", "2020-2024" | `--year <range>` | No year filter |
+  | Graph Snowballing: "滚雪球/前引后引/拓扑扩展" | `--snowball` | Enabled by default |
+  | Bypass Snowballing: "只要关键词检索/不要滚雪球" | `--no-snowball` | Full snowball expansion |
+  | Human-in-the-Loop Curation: "终端交互勾选/剔除无关文献" | `--interactive` | Auto-detect TTY |
   | Dry-run: "只看不存", "仅预览检索结果" | `--dry-run` | Sync to Zotero |
 
 ### Step 2: CIMO Decomposition & Vocabulary Expansion
@@ -65,7 +69,11 @@ Deconstruct the problem into four explicit dimensions:
 4. **Formulate CLI Command**:
    Combine the compiled Tier 1 Query with mapped options:
    ```bash
-   uv run python -m research_toolkit.cli search "<Tier 1 Query>" -k <limit> --topic <slug> [--sort citations|recent|composite] [--min-cites <N>] [--year <range>] [--peer-reviewed] [--dry-run]
+   uv run python -m research_toolkit.cli search "<Tier 1 Query>" -k <limit> --topic <slug> [--sort composite|topological|citations|recent] [--min-cites <N>] [--year <range>] [--peer-reviewed] [--snowball/--no-snowball] [--dry-run]
+   ```
+   Or to expand an existing Zotero collection of seed papers:
+   ```bash
+   uv run python -m research_toolkit.cli expand "<collection-name>" -k <limit> [--sort topological]
    ```
 
 ### Step 4: Presentation & Execution Modes

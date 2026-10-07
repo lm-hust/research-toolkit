@@ -145,6 +145,41 @@ class TestRanker(unittest.TestCase):
         selected = self.ranker.rank_and_select([obscure_review, breakthrough], top_k=2, sort_by="composite")
         self.assertEqual(selected[0].paper_id, "breakthrough")
 
+    def test_topological_score_boost(self):
+        """Papers with high co_citation_count receive a topological boost."""
+        paper_isolated = PaperCandidate(
+            paper_id="isolated",
+            title="Isolated Candidate",
+            year=2024,
+            citation_count=50,
+            relevance_score=0.8,
+            co_citation_count=0,
+        )
+        paper_cocited = PaperCandidate(
+            paper_id="cocited",
+            title="Co-cited Candidate",
+            year=2024,
+            citation_count=50,
+            relevance_score=0.8,
+            co_citation_count=4,
+            topological_role="foundational",
+        )
+
+        score_iso = self.ranker.score(paper_isolated)
+        score_co = self.ranker.score(paper_cocited)
+
+        self.assertGreater(score_co, score_iso)
+        self.assertGreater(paper_cocited.topological_score, 0.0)
+
+    def test_topological_sorting_mode(self):
+        """Mode sort_by='topological' orders candidates primarily by co_citation_count."""
+        p1 = PaperCandidate(paper_id="p1", title="Low Co-cite", co_citation_count=1, citation_count=1000)
+        p2 = PaperCandidate(paper_id="p2", title="High Co-cite", co_citation_count=5, citation_count=50)
+
+        selected = self.ranker.rank_and_select([p1, p2], top_k=2, sort_by="topological")
+        self.assertEqual(selected[0].paper_id, "p2")
+        self.assertEqual(selected[1].paper_id, "p1")
+
 
 if __name__ == "__main__":
     unittest.main()

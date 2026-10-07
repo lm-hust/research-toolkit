@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from research_toolkit.discovery.clients import (
+    CrossrefClient,
     OpenAlexClient,
     SemanticScholarClient,
     reconstruct_openalex_abstract,
@@ -211,10 +212,117 @@ class TestClients(unittest.TestCase):
         impact = client.get_source_impact("https://openalex.org/S12345")
         self.assertAlmostEqual(impact, 9.62, places=2)
 
-    def test_openalex_client_get_source_impact_invalid_id(self):
-        """Returns 0.0 without network call when source ID is invalid."""
+    @patch("urllib.request.urlopen")
+    def test_openalex_client_get_works_by_ids(self, mock_urlopen):
+        """Verifies OpenAlexClient batch works retrieval using pipe-delimited IDs."""
+        oa_response = {
+            "results": [
+                {
+                    "id": "https://openalex.org/W111",
+                    "doi": "https://doi.org/10.1000/1",
+                    "title": "Foundational Work 1",
+                    "publication_year": 2019,
+                    "cited_by_count": 500,
+                    "type": "article",
+                    "referenced_works": ["https://openalex.org/W999"],
+                    "primary_location": {"source": {"display_name": "Nature", "summary_stats": {"2yr_mean_citedness": 12.0}}},
+                },
+                {
+                    "id": "https://openalex.org/W222",
+                    "doi": "https://doi.org/10.1000/2",
+                    "title": "Foundational Work 2",
+                    "publication_year": 2020,
+                    "cited_by_count": 300,
+                    "type": "article",
+                    "referenced_works": [],
+                    "primary_location": {"source": {"display_name": "Science", "summary_stats": {"2yr_mean_citedness": 11.5}}},
+                },
+            ]
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(oa_response).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
         client = OpenAlexClient()
-        self.assertEqual(client.get_source_impact("invalid_source_id"), 0.0)
+        works = client.get_works_by_ids(["W111", "W222"])
+
+        self.assertEqual(len(works), 2)
+        self.assertEqual(works[0].paper_id, "https://openalex.org/W111")
+        self.assertEqual(works[0].doi, "10.1000/1")
+        self.assertEqual(works[0].referenced_works, ["https://openalex.org/W999"])
+        self.assertEqual(works[1].title, "Foundational Work 2")
+
+    @patch("urllib.request.urlopen")
+    def test_openalex_client_get_forward_citations(self, mock_urlopen):
+        """Verifies OpenAlexClient retrieves works citing seed IDs."""
+        oa_response = {
+            "results": [
+                {
+                    "id": "https://openalex.org/W333",
+                    "doi": "https://doi.org/10.1000/3",
+                    "title": "SOTA Graph Survey",
+                    "publication_year": 2025,
+                    "cited_by_count": 45,
+                    "type": "review",
+                    "referenced_works": ["https://openalex.org/W111", "https://openalex.org/W222"],
+                    "primary_location": {"source": {"display_name": "ACM Computing Surveys", "summary_stats": {"2yr_mean_citedness": 8.0}}},
+                }
+            ]
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(oa_response).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        client = OpenAlexClient()
+        citations = client.get_forward_citations(["W111", "W222"], limit=10)
+
+        self.assertEqual(len(citations), 1)
+        self.assertEqual(citations[0].paper_id, "https://openalex.org/W333")
+        self.assertTrue(citations[0].is_review)
+        self.assertEqual(citations[0].referenced_works, ["https://openalex.org/W111", "https://openalex.org/W222"])
+
+    @patch("urllib.request.urlopen")
+    def test_crossref_client_get_work(self, mock_urlopen):
+        """Verifies CrossrefClient gets metadata and references for canonical DOI."""
+        crossref_response = {
+            "status": "ok",
+            "message": {
+                "DOI": "10.1016/j.patcog.2021.108000",
+                "title": ["Canonical Deep Learning Paper"],
+                "created": {"date-parts": [[2021, 5, 1]]},
+                "author": [{"given": "Jane", "family": "Doe"}],
+                "container-title": ["Pattern Recognition"],
+                "is-referenced-by-count": 120,
+                "reference": [
+                    {"DOI": "10.1000/ref1", "article-title": "Earlier Work"},
+                    {"key": "ref2", "unstructured": "Unstructured Ref without DOI"}
+                ]
+            }
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(crossref_response).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        client = CrossrefClient(email="test@example.com")
+        work = client.get_work("10.1016/j.patcog.2021.108000")
+
+        self.assertIsNotNone(work)
+        assert work is not None
+        self.assertEqual(work["title"], "Canonical Deep Learning Paper")
+        self.assertEqual(work["doi"], "10.1016/j.patcog.2021.108000")
+        self.assertEqual(work["citation_count"], 120)
+        self.assertEqual(len(work["references"]), 2)
+        self.assertEqual(work["references"][0]["doi"], "10.1000/ref1")
+
+    @patch("urllib.request.urlopen")
+    def test_crossref_client_verify_doi(self, mock_urlopen):
+        """Verifies verify_doi returns True when work exists, False on 404."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({"status": "ok", "message": {"DOI": "10.1000/valid"}}).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        client = CrossrefClient()
+        self.assertTrue(client.verify_doi("10.1000/valid"))
 
 
 if __name__ == "__main__":

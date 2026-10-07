@@ -25,9 +25,11 @@ class Ranker:
         w_rel: float = 0.40,
         w_cite: float = 0.35,
         w_venue: float = 0.25,
+        w_topo: float = 0.20,
         c_cap: float = 50.0,
         i_cap: float = 15.0,
         if_cap: float = 20.0,
+        topo_cap: float = 5.0,
         beta_review: float = 0.20,
         venue_registry: Optional[VenueRegistry] = None,
     ):
@@ -35,9 +37,11 @@ class Ranker:
         self.w_rel = w_rel
         self.w_cite = w_cite
         self.w_venue = w_venue
+        self.w_topo = w_topo
         self.c_cap = c_cap
         self.i_cap = i_cap
         self.if_cap = if_cap
+        self.topo_cap = topo_cap
         self.beta_review = beta_review
         self.venue_registry = venue_registry if venue_registry is not None else VenueRegistry()
 
@@ -69,7 +73,15 @@ class Ranker:
         else:
             s_venue = 0.15  # Baseline for unindexed preprint/unknown venue
 
-        # 3. Review paper boost with age decay
+        # 3. Topological centrality & co-citation score
+        if p.co_citation_count > 0:
+            s_topo = min(1.0, math.log1p(p.co_citation_count) / math.log1p(self.topo_cap))
+            p.topological_score = round(s_topo, 4)
+        else:
+            s_topo = 0.0
+            p.topological_score = 0.0
+
+        # 4. Review paper boost with age decay
         b_review = 0.0
         if p.is_review:
             decay = math.exp(-0.15 * max(0, age - 1))
@@ -79,6 +91,7 @@ class Ranker:
             self.w_rel * p.relevance_score
             + self.w_cite * s_cite
             + self.w_venue * s_venue
+            + self.w_topo * s_topo
             + b_review
         )
         p.composite_score = round(composite, 4)
@@ -95,7 +108,7 @@ class Ranker:
     ) -> List[PaperCandidate]:
         """
         Ranks and filters candidates by specified sorting mode and qualification thresholds.
-        Conforms to ADR-0004.
+        Conforms to ADR-0004 and ADR-0005.
         """
         filtered = list(candidates)
 
@@ -123,6 +136,10 @@ class Ranker:
         elif mode == "recent":
             filtered.sort(
                 key=lambda x: (x.year or 0, x.citation_count or 0, x.composite_score), reverse=True
+            )
+        elif mode == "topological":
+            filtered.sort(
+                key=lambda x: (x.co_citation_count or 0, x.composite_score), reverse=True
             )
         else:  # default 'composite'
             filtered.sort(key=lambda x: x.composite_score, reverse=True)

@@ -180,7 +180,64 @@ class TestSearchCli(unittest.TestCase):
             min_cites=25,
             year_range=(2021, 2025),
             peer_reviewed_only=True,
+            snowball=True,
         )
+
+    @patch("research_toolkit.cli.ZoteroManager")
+    @patch("research_toolkit.cli.DiscoveryService")
+    def test_search_with_no_snowball(self, mock_service_cls, mock_zotero_cls):
+        """Passing --no-snowball forwards snowball=False to service."""
+        mock_service = MagicMock()
+        mock_service_cls.return_value = mock_service
+        mock_service.search_and_rank.return_value = [self.mock_candidate]
+
+        mock_zotero = MagicMock()
+        mock_zotero_cls.return_value = mock_zotero
+        mock_zotero.sync_to_collection.return_value = (self.mock_col, [{"key": "ITEM_1"}])
+
+        result = self.runner.invoke(cli, ["search", "Deep Learning", "--no-snowball", "--yes"])
+        self.assertEqual(result.exit_code, 0)
+        mock_service.search_and_rank.assert_called_once_with(
+            "Deep Learning",
+            top_k=8,
+            sort_by="composite",
+            min_cites=0,
+            year_range=None,
+            peer_reviewed_only=False,
+            snowball=False,
+        )
+
+    @patch("research_toolkit.cli.ZoteroManager")
+    @patch("research_toolkit.cli.DiscoveryService")
+    def test_expand_command(self, mock_service_cls, mock_zotero_cls):
+        """Verifies expand command fetches collection items, runs snowballer, and syncs."""
+        mock_zotero = MagicMock()
+        mock_zotero_cls.return_value = mock_zotero
+        mock_col_obj = MagicMock()
+        mock_col_obj.key = "COL_123"
+        mock_zotero.client.get_or_create_collection.return_value = mock_col_obj
+        mock_zotero.client.get_collection_items.return_value = [
+            {"key": "ITEM_A", "data": {"title": "Seed A", "DOI": "10.1000/a"}}
+        ]
+        mock_zotero.sync_to_collection.return_value = (mock_col_obj, MagicMock())
+
+        mock_service = MagicMock()
+        mock_service_cls.return_value = mock_service
+        mock_snowball_res = MagicMock()
+        mock_core_candidate = PaperCandidate(
+            paper_id="core_1",
+            title="Core Paper Found Via Graph",
+            topological_role="foundational",
+            co_citation_count=3,
+        )
+        mock_snowball_res.all_candidates = [mock_core_candidate]
+        mock_service.snowballer.snowball.return_value = mock_snowball_res
+        mock_service.ranker.rank_and_select.return_value = [mock_core_candidate]
+
+        result = self.runner.invoke(cli, ["expand", "my-seeds", "--yes"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("Successfully expanded and synced 1 papers", result.output)
+        mock_zotero.sync_to_collection.assert_called_once_with("my-seeds", [mock_core_candidate])
 
 
 if __name__ == "__main__":

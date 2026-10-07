@@ -143,9 +143,26 @@ class ZoteroManager:
             if cites >= 100:
                 tags.append({"tag": "cites:>100"})
 
+            # Topological role tags
+            if c.topological_role == "foundational":
+                tags.append({"tag": "topo/foundational"})
+            elif c.topological_role in ("recent_advancement", "sota"):
+                tags.append({"tag": "topo/recent-advancement"})
+            elif c.topological_role == "seed":
+                tags.append({"tag": "topo/seed"})
+
+            if c.co_citation_count > 0:
+                tags.append({"tag": f"co-cites:>={c.co_citation_count}"})
+
             inf = c.influential_citation_count or 0
             score = c.composite_score or 0.0
-            extra_text = f"Citations: {cites} | Influential: {inf} | Score: {score:.3f}"
+            if c.co_citation_count > 0:
+                extra_text = (
+                    f"Citations: {cites} | Co-Cites: {c.co_citation_count} | "
+                    f"Role: {c.topological_role} | Score: {score:.3f}"
+                )
+            else:
+                extra_text = f"Citations: {cites} | Influential: {inf} | Score: {score:.3f}"
 
             url = f"https://doi.org/{clean_doi}" if clean_doi else (c.pdf_url or "")
 
