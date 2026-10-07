@@ -39,6 +39,11 @@ class TestCliSuite(unittest.TestCase):
         self.assertIn("search_literature", tool_names)
         self.assertIn("verify_checkpoint", tool_names)
 
+    def test_cli_generate_key(self):
+        result = self.runner.invoke(cli, ["generate-key"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("🔑 Generated API Key: rtk_", result.output)
+
 
 if __name__ == "__main__":
     unittest.main()

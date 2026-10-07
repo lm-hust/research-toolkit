@@ -10,6 +10,7 @@ import logging
 import os
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from research_toolkit.discovery.dedup import Deduplicator
@@ -65,6 +66,7 @@ class ZoteroClient:
         payload: Optional[Any] = None,
         params: Optional[Dict[str, Any]] = None,
         extra_headers: Optional[Dict[str, str]] = None,
+        raw: bool = False,
     ) -> Any:
         if not self.user_id:
             raise ValueError(
@@ -89,11 +91,28 @@ class ZoteroClient:
 
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
+                if raw:
+                    return resp.read()
                 body = resp.read().decode("utf-8")
                 return json.loads(body) if body else {}
         except Exception as e:
             logger.error("Zotero API request %s %s failed: %s", method, full_url, e)
             raise
+
+    def download_item_file(self, item_key: str, dest_path: Path) -> Optional[Path]:
+        """
+        Downloads a full-text attachment file directly from Zotero Cloud Storage.
+        Saves content to dest_path and returns the path on success, or None on failure.
+        """
+        try:
+            content = self._request("GET", f"/items/{item_key}/file", raw=True)
+            if content and isinstance(content, bytes):
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                dest_path.write_bytes(content)
+                return dest_path
+        except Exception as e:
+            logger.warning("Failed to download cloud file for attachment item %s: %s", item_key, e)
+        return None
 
     def get_or_create_collection(
         self, name: str, parent_key: Optional[str] = None

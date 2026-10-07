@@ -48,3 +48,14 @@ _Avoid_: Attachment, uploaded file
 **DistilledEvidence**:
 A structured takeaway, claim, or citation extracted from NotebookLM interactions, formatted for ingestion into Obsidian PKM.
 _Avoid_: Chat log, summary snippet
+
+### Remote Gateway & Ingress
+
+**DualStackGateway**:
+The unified daemon exposing both Model Context Protocol (MCP) Server-Sent Events (SSE) and OpenAPI 3.0 REST endpoints, protected by bearer token authentication.
+_Avoid_: API server, web backend
+
+**CloudStorageResolver**:
+The cloud resolution mechanism pulling full-text PDF attachments from Zotero Cloud Storage via Web API on headless environments, eliminating local desktop filesystem prerequisites.
+_Avoid_: Cloud sync, attachment puller
+

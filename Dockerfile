@@ -32,7 +32,9 @@ RUN pip install --no-cache-dir -e .
 # Default volume mount points
 VOLUME ["/app/data", "/app/vault"]
 
+EXPOSE 8820
+
 # Default entrypoint runs the unified research-toolkit CLI
 ENTRYPOINT ["python3", "-m", "research_toolkit.cli"]
-CMD ["--help"]
+CMD ["serve", "--host", "0.0.0.0", "--port", "8820"]
 

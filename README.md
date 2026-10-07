@@ -149,29 +149,66 @@ PYTHONPATH=src python3 -m research_toolkit.cli ask "这些文献中关于 GNN �
 
 ---
 
-### 辅助命令：导出 MCP Schema
+### 辅助命令：密钥生成、网关启动与 MCP Schema 导出
 
-若需要将本工具能力注册为 MCP Server 供 Claude 或其他 Agent 调用：
 ```bash
+# 一键生成安全 API 密钥并直接写入 .env
+PYTHONPATH=src python3 -m research_toolkit.cli generate-key --write-env
+
+# 启动双协议栈网关守护进程（默认端口 8820，MCP SSE + OpenAPI REST）
+PYTHONPATH=src python3 -m research_toolkit.cli serve --port 8820
+
+# 导出 MCP 工具 Schema JSON
 PYTHONPATH=src python3 -m research_toolkit.cli mcp-schema
 ```
 
 ---
 
-## 🐳 Docker / VPS 容器化部署
+## 🐳 Docker / 远程 VPS 一键部署 (ADR-0003 & ADR-0005)
 
-本项目遵循 ADR-0003 提供标准化 Dockerfile 与 docker-compose 支持，实现环境零漂移：
+本项目提供 **Toolkit 双协议栈服务 + Caddy 自动化 TLS 反向代理** 的标准编排，专为无头 Linux VPS（如 `do-vps`）打造：
 
 ```bash
-# 1. 构建镜像
-docker compose build
+# 1. 配置 VPS 上的 .env
+cp .env.example .env
+# 填入 DUCKDNS_DOMAIN=your_subdomain.duckdns.org
+# 填入 RESEARCH_TOOLKIT_API_KEY=your_secret_key
+# 填入 ZOTERO_API_KEY, ZOTERO_USER_ID, NOTEBOOKLM_AUTH_JSON 等
 
-# 2. 运行健康检查
-docker compose run --rm toolkit doctor
+# 2. 一键构建并后台启动（自动申请 Let's Encrypt 证书并启动 Toolkit）
+docker compose up -d --build
 
-# 3. 运行文献检索
-docker compose run --rm toolkit search "Diffusion Models" --limit 5 --dry-run
+# 3. 验证服务状态
+curl https://your_subdomain.duckdns.org/health
 ```
+
+### 接入大模型客户端
+
+#### 1. ChatGPT 在线端 (Custom GPT Actions)
+1. 在 ChatGPT 进入 GPT Builder -> **Configure** -> 点击 **Create new action**。
+2. **Authentication**：
+   - 方式选择 **API Key**，类型选择 **Bearer**。
+   - 在 API Key 输入框填入你的 `RESEARCH_TOOLKIT_API_KEY`。
+3. **Schema 导入**：
+   - 点击 **Import from URL**，输入：`https://<your_subdomain>.duckdns.org/openapi.json`。
+   - 自动解析出 `search`, `checkpoint`, `sync-notebook`, `ask` 四大能力！
+
+#### 2. Claude Desktop (MCP SSE)
+在 `~/Library/Application Support/Claude/claude_desktop_config.json`（或 Linux/Windows 对应路径）中加入：
+```json
+{
+  "mcpServers": {
+    "research-toolkit": {
+      "url": "https://<your_subdomain>.duckdns.org/mcp/sse",
+      "headers": {
+        "Authorization": "Bearer your_secret_key"
+      }
+    }
+  }
+}
+```
+*(同时支持在 URL 后携带参数：`https://<your_subdomain>.duckdns.org/mcp/sse?token=your_secret_key`)*
+
 
 ---
 

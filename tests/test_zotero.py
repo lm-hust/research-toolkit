@@ -389,6 +389,48 @@ class TestZoteroManager(unittest.TestCase):
         self.assertEqual(report.missing_items[0].key, "P2")
         self.assertEqual(report.missing_items[0].doi_url, "https://doi.org/10.1000/missing")
 
+    def test_cloud_storage_resolver_downloads_missing_pdf(self):
+        """CloudStorageResolver automatically downloads missing PDF from cloud storage."""
+        attach_key = "ATT_CLOUD"
+        raw_items = [
+            {
+                "key": "P1",
+                "data": {
+                    "itemType": "journalArticle",
+                    "title": "Cloud Available Paper",
+                    "DOI": "10.1000/cloud",
+                },
+            },
+            {
+                "key": attach_key,
+                "data": {
+                    "itemType": "attachment",
+                    "parentItem": "P1",
+                    "contentType": "application/pdf",
+                },
+            },
+        ]
+        self.mock_client.get_collection_items.return_value = raw_items
+
+        def fake_download(k, dest_path):
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            dest_path.write_bytes(b"%PDF-1.4 simulated cloud content")
+            return dest_path
+
+        self.mock_client.download_item_file.side_effect = fake_download
+
+        # Scan checkpoint with cloud download enabled
+        report = self.manager.scan_collection_checkpoint("col_key", "Cloud Collection", auto_download_cloud=True)
+        self.assertEqual(report.total_items, 1)
+        self.assertEqual(len(report.ready_items), 1)
+        self.assertEqual(len(report.missing_items), 0)
+        self.assertEqual(report.ready_items[0].key, "P1")
+        self.assertTrue(report.ready_items[0].has_pdf)
+        pdf_path = report.ready_items[0].pdf_path
+        self.assertIsNotNone(pdf_path)
+        assert pdf_path is not None
+        self.assertTrue(Path(pdf_path).exists())
+
 
 if __name__ == "__main__":
     unittest.main()
