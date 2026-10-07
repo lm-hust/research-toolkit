@@ -3,6 +3,7 @@ tests/test_server.py
 Unit tests for DualStackGateway (FastAPI + FastMCP + Bearer Auth).
 """
 
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -116,6 +117,84 @@ class TestDualStackServer(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["answer"], "Synthesized insight")
         mock_ask.assert_called_once_with(query="What is oversmoothing?", notebook_id="nb_123")
+
+
+MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
+
+
+def _jsonrpc(method: str, params: dict, req_id: int = 1) -> dict:
+    return {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
+
+
+def _parse_mcp_response(resp) -> dict:
+    """Streamable HTTP replies are either plain JSON or a single SSE 'data:' event."""
+    if resp.headers.get("content-type", "").startswith("application/json"):
+        return resp.json()
+    data_lines = [line[5:].strip() for line in resp.text.splitlines() if line.startswith("data:")]
+    return json.loads(data_lines[-1])
+
+
+class TestMcpStreamableHttp(unittest.TestCase):
+    def setUp(self):
+        self.test_key = "secret_test_token_123"
+        os.environ["RESEARCH_TOOLKIT_API_KEY"] = self.test_key
+        # Context-managed client runs the lifespan that starts the MCP session manager.
+        self.client = TestClient(create_app())
+        self.client.__enter__()
+
+    def tearDown(self):
+        self.client.__exit__(None, None, None)
+        os.environ.pop("RESEARCH_TOOLKIT_API_KEY", None)
+
+    def test_missing_token_rejected(self):
+        resp = self.client.post(
+            "/mcp/http",
+            json=_jsonrpc("tools/list", {}),
+            headers=MCP_HEADERS,
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_wrong_token_rejected(self):
+        resp = self.client.post(
+            "/mcp/http?token=wrong",
+            json=_jsonrpc("tools/list", {}),
+            headers=MCP_HEADERS,
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_initialize_with_query_token(self):
+        resp = self.client.post(
+            f"/mcp/http?token={self.test_key}",
+            json=_jsonrpc(
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "0"},
+                },
+            ),
+            headers=MCP_HEADERS,
+        )
+        self.assertEqual(resp.status_code, 200)
+        result = _parse_mcp_response(resp)["result"]
+        self.assertEqual(result["serverInfo"]["name"], "research-toolkit")
+
+    def test_tools_list_with_bearer_header(self):
+        resp = self.client.post(
+            "/mcp/http",
+            json=_jsonrpc("tools/list", {}, req_id=2),
+            headers={**MCP_HEADERS, "Authorization": f"Bearer {self.test_key}"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        tool_names = {t["name"] for t in _parse_mcp_response(resp)["result"]["tools"]}
+        self.assertEqual(
+            tool_names,
+            {"search_literature", "verify_checkpoint", "sync_notebook", "ask_notebook"},
+        )
+
+    def test_legacy_sse_requires_token(self):
+        resp = self.client.get("/mcp/sse")
+        self.assertEqual(resp.status_code, 401)
 
 
 if __name__ == "__main__":

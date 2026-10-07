@@ -1,22 +1,27 @@
 """
 src/research_toolkit/mcp/server.py
-Dual-Stack Gateway daemon providing Model Context Protocol (MCP) Server-Sent Events (SSE)
-and OpenAPI 3.0 REST endpoints for Claude and ChatGPT Actions (ADR-0006).
+Dual-Stack Gateway daemon providing Model Context Protocol (MCP) Streamable HTTP and
+Server-Sent Events (SSE) transports plus OpenAPI 3.0 REST endpoints for Claude and
+ChatGPT Actions (ADR-0006).
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Dict, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import StreamableHTTPASGIApp
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
+from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from research_toolkit.mcp.tools import (
     ask_notebook,
@@ -99,15 +104,46 @@ async def verify_auth_token(
     return True
 
 
+class MCPTokenGate:
+    """
+    Pure ASGI perimeter guard for MCP transports.
+    Accepts 'Authorization: Bearer <token>' or '?token=<token>'. Clients that cannot
+    send custom headers (e.g. claude.ai custom connectors) embed the token in the URL.
+    Implemented without BaseHTTPMiddleware so streamed MCP responses are never buffered.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        expected_key = get_configured_api_key()
+        if scope["type"] == "http" and expected_key:
+            request = Request(scope)
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
+            if not token:
+                token = request.query_params.get("token", "")
+            if token != expected_key:
+                response = JSONResponse(
+                    status_code=401,
+                    content={"detail": "Unauthorized: Invalid or missing token for MCP access."},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 # ---------------------------------------------------------------------------
 # FastMCP Server Definition
 # ---------------------------------------------------------------------------
 
 
 def create_fastmcp_server() -> FastMCP:
-    """Builds and registers FastMCP server instance for MCP SSE transport."""
+    """Builds and registers FastMCP server instance for MCP Streamable HTTP and SSE transports."""
     sec_settings = TransportSecuritySettings(enable_dns_rebinding_protection=False)
-    mcp = FastMCP("research-toolkit", transport_security=sec_settings)
+    # Stateless Streamable HTTP: no per-session server state, so clients survive restarts.
+    mcp = FastMCP("research-toolkit", transport_security=sec_settings, stateless_http=True)
 
     @mcp.tool(
         name="search_literature",
@@ -151,7 +187,18 @@ def create_fastmcp_server() -> FastMCP:
 
 def create_app() -> FastAPI:
     """Builds the dual-stack FastAPI application."""
+    fastmcp_server = create_fastmcp_server()
+    # Initializes fastmcp_server.session_manager for the Streamable HTTP transport.
+    fastmcp_server.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Mounted sub-app lifespans never run, so the gateway drives the session manager.
+        async with fastmcp_server.session_manager.run():
+            yield
+
     app = FastAPI(
+        lifespan=lifespan,
         title="Research Toolkit Dual-Stack Gateway",
         description=(
             "Dual-stack MCP and OpenAPI REST gateway for literature discovery, "
@@ -229,31 +276,18 @@ def create_app() -> FastAPI:
         """Queries NotebookLM notebook and extracts verbatim quoted evidence."""
         return ask_notebook(query=req.query, notebook_id=req.notebook_id)
 
-    # 3. Mount FastMCP SSE Application
-    fastmcp_server = create_fastmcp_server()
-    sse_starlette_app = fastmcp_server.sse_app()
+    # 3. MCP Streamable HTTP at an exact path (no Mount, so no trailing-slash redirect).
+    #    Registered before the /mcp mount so it is matched first.
+    app.router.routes.append(
+        Route(
+            "/mcp/http",
+            endpoint=MCPTokenGate(StreamableHTTPASGIApp(fastmcp_server.session_manager)),
+            methods=["GET", "POST", "DELETE"],
+        )
+    )
 
-    from starlette.middleware.base import BaseHTTPMiddleware
-
-    class MCPAuthMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request: Request, call_next):
-            expected_key = get_configured_api_key()
-            if expected_key:
-                auth_header = request.headers.get("Authorization", "")
-                token = ""
-                if auth_header.startswith("Bearer "):
-                    token = auth_header[7:].strip()
-                if not token:
-                    token = request.query_params.get("token", "")
-                if token != expected_key:
-                    return JSONResponse(
-                        status_code=401,
-                        content={"detail": "Unauthorized: Invalid or missing token for MCP access."},
-                    )
-            return await call_next(request)
-
-    sse_starlette_app.add_middleware(MCPAuthMiddleware)
-    app.mount("/mcp", sse_starlette_app)
+    # 4. Legacy MCP SSE transport (/mcp/sse + /mcp/messages/)
+    app.mount("/mcp", MCPTokenGate(fastmcp_server.sse_app()))
 
     return app
 
