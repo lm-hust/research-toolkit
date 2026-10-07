@@ -89,14 +89,9 @@ class DiscoveryService:
             table.add_column("DOI / Identifier", min_width=20)
 
             for idx, p in enumerate(candidates, start=1):
-                is_preprint = (
-                    getattr(p, "is_preprint", False)
-                    or (p.venue and "arxiv" in p.venue.lower())
-                    or (p.arxiv_id and not p.doi)
-                )
                 if p.is_review:
                     doc_type = "[REV]"
-                elif is_preprint:
+                elif p.is_preprint:
                     doc_type = "[PRE]"
                 else:
                     doc_type = "[RES]"
@@ -122,7 +117,12 @@ class DiscoveryService:
             headers = ["#", "Type", "Title", "Year", "Cites", "Score", "DOI"]
             rows = []
             for idx, p in enumerate(candidates, start=1):
-                doc_type = "[REV]" if p.is_review else "[RES]"
+                if p.is_review:
+                    doc_type = "[REV]"
+                elif p.is_preprint:
+                    doc_type = "[PRE]"
+                else:
+                    doc_type = "[RES]"
                 doi_disp = p.doi or p.arxiv_id or p.paper_id
                 title_disp = (p.title[:45] + "...") if len(p.title) > 48 else p.title
                 rows.append([

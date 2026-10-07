@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from research_toolkit.discovery.clients import OpenAlexClient
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +28,13 @@ class VenueRegistry:
         self,
         data_path: Optional[Path] = None,
         cache_path: Optional[Path] = None,
+        openalex_client: Optional[OpenAlexClient] = None,
     ):
         self.data_path = data_path or DATA_PATH
         self.cache_path = cache_path or CACHE_PATH
         self.venues: List[Dict[str, Any]] = self._load_data()
         self._cache: Dict[str, Any] = self._load_cache()
+        self.openalex_client = openalex_client or OpenAlexClient()
 
     def _load_data(self) -> List[Dict[str, Any]]:
         if not self.data_path.exists():
@@ -65,25 +67,15 @@ class VenueRegistry:
         if not clean_id.startswith("S"):
             return 0.0
 
-        api_key = os.getenv("OPENALEX_API_KEY")
-        url = f"https://api.openalex.org/sources/{clean_id}"
-        if api_key:
-            url += f"?api_key={api_key}"
-
-        req = urllib.request.Request(url, headers={"User-Agent": "ResearchToolkit/0.1.0"})
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                summary_stats = data.get("summary_stats") or {}
-                impact = float(summary_stats.get("2yr_mean_citedness") or 0.0)
-                name = data.get("display_name") or ""
+            impact = self.openalex_client.get_source_impact(clean_id)
+            if impact > 0.0:
                 self._cache[source_id] = {
                     "impact": impact,
-                    "name": name,
                     "timestamp": time.time(),
                 }
                 self._save_cache()
-                return impact
+            return impact
         except Exception as e:
             logger.debug("Could not fetch OpenAlex source impact for %s: %s", clean_id, e)
             return 0.0

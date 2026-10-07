@@ -108,15 +108,7 @@ class Ranker:
             filtered = [c for c in filtered if c.year and min_y <= c.year <= max_y]
 
         if peer_reviewed_only:
-            filtered = [
-                c
-                for c in filtered
-                if not (
-                    getattr(c, "is_preprint", False)
-                    or (c.venue and "arxiv" in c.venue.lower())
-                    or (c.arxiv_id and not c.doi)
-                )
-            ]
+            filtered = [c for c in filtered if not c.is_preprint]
 
         # 2. Score all remaining candidates
         for c in filtered:

@@ -231,14 +231,14 @@ class TestZoteroManager(unittest.TestCase):
         payload = self.mock_client.create_items.call_args[0][0]
         item_data = payload[0]
 
-        # Verify extra field contains citations and score
+        # Verify extra field contains citations and score per ADR-0004
         self.assertIn("extra", item_data)
-        self.assertIn("Citations: 150", item_data["extra"])
-        self.assertIn("Influential Citations: 25", item_data["extra"])
-        self.assertIn("Discovery Score: 0.885", item_data["extra"])
+        self.assertEqual(item_data["extra"], "Citations: 150 | Influential: 25 | Score: 0.885")
 
-        # Verify citation tier tag
+        # Verify cumulative citation tier tags
         tags = [t["tag"] for t in item_data["tags"]]
+        self.assertIn("cites:>10", tags)
+        self.assertIn("cites:>50", tags)
         self.assertIn("cites:>100", tags)
         self.assertIn("type/review", tags)
         self.assertIn("type/peer-reviewed", tags)

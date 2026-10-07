@@ -3,37 +3,138 @@
     "canonical_name": "Nature",
     "type": "journal",
     "impact_factor": 50.5,
-    "aliases": ["nature"]
+    "aliases": [
+      "nature"
+    ]
   },
   {
     "canonical_name": "Science",
     "type": "journal",
     "impact_factor": 44.7,
-    "aliases": ["science"]
+    "aliases": [
+      "science"
+    ]
   },
   {
     "canonical_name": "Cell",
     "type": "journal",
     "impact_factor": 45.5,
-    "aliases": ["cell"]
-  },
-  {
-    "canonical_name": "Nature Reviews",
-    "type": "journal",
-    "impact_factor": 40.0,
-    "aliases": ["nature reviews", "nature reviews methods primers", "nature reviews genetics", "nature reviews immunology"]
+    "aliases": [
+      "cell"
+    ]
   },
   {
     "canonical_name": "Nature Communications",
     "type": "journal",
     "impact_factor": 14.7,
-    "aliases": ["nature communications", "nat commun"]
+    "aliases": [
+      "nature communications",
+      "nat commun"
+    ]
+  },
+  {
+    "canonical_name": "Science Advances",
+    "type": "journal",
+    "impact_factor": 11.7,
+    "aliases": [
+      "science advances",
+      "sci adv"
+    ]
+  },
+  {
+    "canonical_name": "Proceedings of the National Academy of Sciences",
+    "type": "journal",
+    "impact_factor": 9.4,
+    "aliases": [
+      "proceedings of the national academy of sciences",
+      "pnas"
+    ]
+  },
+  {
+    "canonical_name": "Nature Reviews",
+    "type": "journal",
+    "impact_factor": 40.0,
+    "aliases": [
+      "nature reviews",
+      "nature reviews methods primers",
+      "nature reviews genetics",
+      "nature reviews immunology"
+    ]
+  },
+  {
+    "canonical_name": "Proceedings of the IEEE",
+    "type": "journal",
+    "impact_factor": 23.2,
+    "aliases": [
+      "proceedings of the ieee",
+      "proc ieee"
+    ]
+  },
+  {
+    "canonical_name": "NeurIPS",
+    "type": "conference",
+    "impact_factor": 25.0,
+    "aliases": [
+      "neurips",
+      "nips",
+      "neural information processing systems",
+      "advances in neural information processing systems"
+    ]
+  },
+  {
+    "canonical_name": "ICML",
+    "type": "conference",
+    "impact_factor": 24.0,
+    "aliases": [
+      "icml",
+      "international conference on machine learning"
+    ]
+  },
+  {
+    "canonical_name": "ICLR",
+    "type": "conference",
+    "impact_factor": 24.0,
+    "aliases": [
+      "iclr",
+      "international conference on learning representations"
+    ]
+  },
+  {
+    "canonical_name": "AAAI",
+    "type": "conference",
+    "impact_factor": 21.0,
+    "aliases": [
+      "aaai",
+      "aaai conference on artificial intelligence",
+      "association for the advancement of artificial intelligence"
+    ]
+  },
+  {
+    "canonical_name": "IJCAI",
+    "type": "conference",
+    "impact_factor": 20.0,
+    "aliases": [
+      "ijcai",
+      "international joint conference on artificial intelligence"
+    ]
+  },
+  {
+    "canonical_name": "Journal of Machine Learning Research",
+    "type": "journal",
+    "impact_factor": 15.0,
+    "aliases": [
+      "journal of machine learning research",
+      "jmlr"
+    ]
   },
   {
     "canonical_name": "Nature Machine Intelligence",
     "type": "journal",
     "impact_factor": 18.8,
-    "aliases": ["nature machine intelligence", "nat mach intell"]
+    "aliases": [
+      "nature machine intelligence",
+      "nat mach intell"
+    ]
   },
   {
     "canonical_name": "IEEE Transactions on Pattern Analysis and Machine Intelligence",
@@ -47,28 +148,43 @@
     ]
   },
   {
-    "canonical_name": "Journal of Machine Learning Research",
-    "type": "journal",
-    "impact_factor": 15.0,
-    "aliases": ["journal of machine learning research", "jmlr"]
-  },
-  {
     "canonical_name": "IEEE Transactions on Neural Networks and Learning Systems",
     "type": "journal",
     "impact_factor": 10.4,
-    "aliases": ["ieee transactions on neural networks and learning systems", "ieee tnnls", "tnnls"]
+    "aliases": [
+      "ieee transactions on neural networks and learning systems",
+      "ieee tnnls",
+      "tnnls"
+    ]
   },
   {
-    "canonical_name": "IEEE Transactions on Image Processing",
+    "canonical_name": "Artificial Intelligence",
     "type": "journal",
-    "impact_factor": 10.6,
-    "aliases": ["ieee transactions on image processing", "ieee tip", "tip"]
+    "impact_factor": 14.4,
+    "aliases": [
+      "artificial intelligence",
+      "aij",
+      "artif intell"
+    ]
   },
   {
-    "canonical_name": "IEEE Transactions on Knowledge and Data Engineering",
+    "canonical_name": "Machine Learning",
     "type": "journal",
-    "impact_factor": 8.9,
-    "aliases": ["ieee transactions on knowledge and data engineering", "ieee tkde", "tkde"]
+    "impact_factor": 7.5,
+    "aliases": [
+      "machine learning journal",
+      "mach learn"
+    ]
+  },
+  {
+    "canonical_name": "ACM Computing Surveys",
+    "type": "journal",
+    "impact_factor": 23.8,
+    "aliases": [
+      "acm computing surveys",
+      "acm comput surv",
+      "computing surveys"
+    ]
   },
   {
     "canonical_name": "CVPR",
@@ -94,30 +210,40 @@
     "canonical_name": "ECCV",
     "type": "conference",
     "impact_factor": 22.0,
-    "aliases": ["eccv", "european conference on computer vision"]
-  },
-  {
-    "canonical_name": "NeurIPS",
-    "type": "conference",
-    "impact_factor": 25.0,
     "aliases": [
-      "neurips",
-      "nips",
-      "neural information processing systems",
-      "advances in neural information processing systems"
+      "eccv",
+      "european conference on computer vision"
     ]
   },
   {
-    "canonical_name": "ICML",
-    "type": "conference",
-    "impact_factor": 24.0,
-    "aliases": ["icml", "international conference on machine learning"]
+    "canonical_name": "International Journal of Computer Vision",
+    "type": "journal",
+    "impact_factor": 19.5,
+    "aliases": [
+      "international journal of computer vision",
+      "ijcv",
+      "int j comput vis"
+    ]
   },
   {
-    "canonical_name": "ICLR",
+    "canonical_name": "IEEE Transactions on Image Processing",
+    "type": "journal",
+    "impact_factor": 10.6,
+    "aliases": [
+      "ieee transactions on image processing",
+      "ieee tip",
+      "tip"
+    ]
+  },
+  {
+    "canonical_name": "ACM Multimedia",
     "type": "conference",
-    "impact_factor": 24.0,
-    "aliases": ["iclr", "international conference on learning representations"]
+    "impact_factor": 18.0,
+    "aliases": [
+      "acm multimedia",
+      "acm mm",
+      "sigmm"
+    ]
   },
   {
     "canonical_name": "ACL",
@@ -133,7 +259,55 @@
     "canonical_name": "EMNLP",
     "type": "conference",
     "impact_factor": 22.0,
-    "aliases": ["emnlp", "empirical methods in natural language processing"]
+    "aliases": [
+      "emnlp",
+      "empirical methods in natural language processing"
+    ]
+  },
+  {
+    "canonical_name": "NAACL",
+    "type": "conference",
+    "impact_factor": 20.0,
+    "aliases": [
+      "naacl",
+      "north american chapter of the association for computational linguistics"
+    ]
+  },
+  {
+    "canonical_name": "Transactions of the Association for Computational Linguistics",
+    "type": "journal",
+    "impact_factor": 10.9,
+    "aliases": [
+      "transactions of the association for computational linguistics",
+      "tacl"
+    ]
+  },
+  {
+    "canonical_name": "COLING",
+    "type": "conference",
+    "impact_factor": 15.0,
+    "aliases": [
+      "coling",
+      "international conference on computational linguistics"
+    ]
+  },
+  {
+    "canonical_name": "ICASSP",
+    "type": "conference",
+    "impact_factor": 16.0,
+    "aliases": [
+      "icassp",
+      "international conference on acoustics, speech, and signal processing"
+    ]
+  },
+  {
+    "canonical_name": "Interspeech",
+    "type": "conference",
+    "impact_factor": 15.0,
+    "aliases": [
+      "interspeech",
+      "international speech communication association"
+    ]
   },
   {
     "canonical_name": "KDD",
@@ -147,29 +321,52 @@
     ]
   },
   {
-    "canonical_name": "AAAI",
+    "canonical_name": "SIGIR",
     "type": "conference",
     "impact_factor": 21.0,
     "aliases": [
-      "aaai",
-      "aaai conference on artificial intelligence",
-      "association for the advancement of artificial intelligence"
+      "sigir",
+      "research and development in information retrieval",
+      "acm sigir conference on research and development in information retrieval"
     ]
   },
   {
-    "canonical_name": "IJCAI",
+    "canonical_name": "The Web Conference",
     "type": "conference",
-    "impact_factor": 20.0,
-    "aliases": ["ijcai", "international joint conference on artificial intelligence"]
+    "impact_factor": 21.0,
+    "aliases": [
+      "the web conference",
+      "www conference",
+      "world wide web conference",
+      "acm the web conference"
+    ]
   },
   {
-    "canonical_name": "ACM Computing Surveys",
-    "type": "journal",
-    "impact_factor": 23.8,
+    "canonical_name": "WSDM",
+    "type": "conference",
+    "impact_factor": 18.0,
     "aliases": [
-      "acm computing surveys",
-      "acm comput surv",
-      "computing surveys"
+      "wsdm",
+      "web search and data mining",
+      "acm international conference on web search and data mining"
+    ]
+  },
+  {
+    "canonical_name": "CIKM",
+    "type": "conference",
+    "impact_factor": 17.0,
+    "aliases": [
+      "cikm",
+      "conference on information and knowledge management"
+    ]
+  },
+  {
+    "canonical_name": "RecSys",
+    "type": "conference",
+    "impact_factor": 18.0,
+    "aliases": [
+      "recsys",
+      "acm conference on recommender systems"
     ]
   },
   {
@@ -183,6 +380,321 @@
     ]
   },
   {
+    "canonical_name": "ACM Transactions on Information Systems",
+    "type": "journal",
+    "impact_factor": 7.8,
+    "aliases": [
+      "acm transactions on information systems",
+      "tois"
+    ]
+  },
+  {
+    "canonical_name": "SIGMOD",
+    "type": "conference",
+    "impact_factor": 22.0,
+    "aliases": [
+      "sigmod",
+      "acm sigmod international conference on management of data"
+    ]
+  },
+  {
+    "canonical_name": "VLDB",
+    "type": "conference",
+    "impact_factor": 22.0,
+    "aliases": [
+      "vldb",
+      "international conference on very large data bases",
+      "proceedings of the vldb endowment",
+      "pvldb"
+    ]
+  },
+  {
+    "canonical_name": "ICDE",
+    "type": "conference",
+    "impact_factor": 19.0,
+    "aliases": [
+      "icde",
+      "ieee international conference on data engineering"
+    ]
+  },
+  {
+    "canonical_name": "PODS",
+    "type": "conference",
+    "impact_factor": 18.0,
+    "aliases": [
+      "pods",
+      "principles of database systems",
+      "acm symposium on principles of database systems"
+    ]
+  },
+  {
+    "canonical_name": "The VLDB Journal",
+    "type": "journal",
+    "impact_factor": 4.2,
+    "aliases": [
+      "the vldb journal",
+      "vldb j"
+    ]
+  },
+  {
+    "canonical_name": "SOSP",
+    "type": "conference",
+    "impact_factor": 23.0,
+    "aliases": [
+      "sosp",
+      "symposium on operating systems principles",
+      "acm symposium on operating systems principles"
+    ]
+  },
+  {
+    "canonical_name": "OSDI",
+    "type": "conference",
+    "impact_factor": 23.0,
+    "aliases": [
+      "osdi",
+      "operating systems design and implementation",
+      "usenix symposium on operating systems design and implementation"
+    ]
+  },
+  {
+    "canonical_name": "EuroSys",
+    "type": "conference",
+    "impact_factor": 19.0,
+    "aliases": [
+      "eurosys",
+      "european conference on computer systems"
+    ]
+  },
+  {
+    "canonical_name": "USENIX ATC",
+    "type": "conference",
+    "impact_factor": 19.0,
+    "aliases": [
+      "usenix atc",
+      "usenix annual technical conference",
+      "atc"
+    ]
+  },
+  {
+    "canonical_name": "FAST",
+    "type": "conference",
+    "impact_factor": 18.0,
+    "aliases": [
+      "fast",
+      "file and storage technologies",
+      "usenix conference on file and storage technologies"
+    ]
+  },
+  {
+    "canonical_name": "ASPLOS",
+    "type": "conference",
+    "impact_factor": 22.0,
+    "aliases": [
+      "asplos",
+      "architectural support for programming languages and operating systems"
+    ]
+  },
+  {
+    "canonical_name": "ISCA",
+    "type": "conference",
+    "impact_factor": 22.0,
+    "aliases": [
+      "isca",
+      "international symposium on computer architecture",
+      "acm/ieee international symposium on computer architecture"
+    ]
+  },
+  {
+    "canonical_name": "MICRO",
+    "type": "conference",
+    "impact_factor": 20.0,
+    "aliases": [
+      "micro",
+      "ieee/acm international symposium on microarchitecture"
+    ]
+  },
+  {
+    "canonical_name": "HPCA",
+    "type": "conference",
+    "impact_factor": 19.0,
+    "aliases": [
+      "hpca",
+      "ieee international symposium on high-performance computer architecture"
+    ]
+  },
+  {
+    "canonical_name": "SIGCOMM",
+    "type": "conference",
+    "impact_factor": 23.0,
+    "aliases": [
+      "sigcomm",
+      "acm sigcomm conference"
+    ]
+  },
+  {
+    "canonical_name": "NSDI",
+    "type": "conference",
+    "impact_factor": 22.0,
+    "aliases": [
+      "nsdi",
+      "networked systems design and implementation",
+      "usenix symposium on networked systems design and implementation"
+    ]
+  },
+  {
+    "canonical_name": "MobiCom",
+    "type": "conference",
+    "impact_factor": 20.0,
+    "aliases": [
+      "mobicom",
+      "international conference on mobile computing and networking",
+      "acm mobicom"
+    ]
+  },
+  {
+    "canonical_name": "IEEE/ACM Transactions on Networking",
+    "type": "journal",
+    "impact_factor": 3.8,
+    "aliases": [
+      "ieee/acm transactions on networking",
+      "ton"
+    ]
+  },
+  {
+    "canonical_name": "IEEE Journal on Selected Areas in Communications",
+    "type": "journal",
+    "impact_factor": 16.4,
+    "aliases": [
+      "ieee journal on selected areas in communications",
+      "jsac"
+    ]
+  },
+  {
+    "canonical_name": "IEEE S&P",
+    "type": "conference",
+    "impact_factor": 23.0,
+    "aliases": [
+      "ieee s&p",
+      "ieee symposium on security and privacy",
+      "oakland"
+    ]
+  },
+  {
+    "canonical_name": "ACM CCS",
+    "type": "conference",
+    "impact_factor": 22.0,
+    "aliases": [
+      "acm ccs",
+      "acm conference on computer and communications security",
+      "ccs"
+    ]
+  },
+  {
+    "canonical_name": "USENIX Security",
+    "type": "conference",
+    "impact_factor": 22.0,
+    "aliases": [
+      "usenix security",
+      "usenix security symposium"
+    ]
+  },
+  {
+    "canonical_name": "NDSS",
+    "type": "conference",
+    "impact_factor": 20.0,
+    "aliases": [
+      "ndss",
+      "network and distributed system security symposium"
+    ]
+  },
+  {
+    "canonical_name": "IEEE Transactions on Information Forensics and Security",
+    "type": "journal",
+    "impact_factor": 7.2,
+    "aliases": [
+      "ieee transactions on information forensics and security",
+      "tifs"
+    ]
+  },
+  {
+    "canonical_name": "IEEE Transactions on Dependable and Secure Computing",
+    "type": "journal",
+    "impact_factor": 7.3,
+    "aliases": [
+      "ieee transactions on dependable and secure computing",
+      "tdsc"
+    ]
+  },
+  {
+    "canonical_name": "ICSE",
+    "type": "conference",
+    "impact_factor": 20.0,
+    "aliases": [
+      "icse",
+      "international conference on software engineering",
+      "ieee/acm international conference on software engineering"
+    ]
+  },
+  {
+    "canonical_name": "FSE",
+    "type": "conference",
+    "impact_factor": 19.0,
+    "aliases": [
+      "fse",
+      "esec/fse",
+      "foundations of software engineering",
+      "acm joint european software engineering conference and symposium on the foundations of software engineering"
+    ]
+  },
+  {
+    "canonical_name": "ASE",
+    "type": "conference",
+    "impact_factor": 18.0,
+    "aliases": [
+      "ase",
+      "automated software engineering",
+      "ieee/acm international conference on automated software engineering"
+    ]
+  },
+  {
+    "canonical_name": "ISSTA",
+    "type": "conference",
+    "impact_factor": 17.0,
+    "aliases": [
+      "issta",
+      "international symposium on software testing and analysis"
+    ]
+  },
+  {
+    "canonical_name": "POPL",
+    "type": "conference",
+    "impact_factor": 21.0,
+    "aliases": [
+      "popl",
+      "principles of programming languages",
+      "acm sigplan-sigact symposium on principles of programming languages"
+    ]
+  },
+  {
+    "canonical_name": "PLDI",
+    "type": "conference",
+    "impact_factor": 21.0,
+    "aliases": [
+      "pldi",
+      "programming language design and implementation",
+      "acm sigplan conference on programming language design and implementation"
+    ]
+  },
+  {
+    "canonical_name": "OOPSLA",
+    "type": "conference",
+    "impact_factor": 19.0,
+    "aliases": [
+      "oopsla",
+      "object-oriented programming, systems, languages, and applications"
+    ]
+  },
+  {
     "canonical_name": "IEEE Transactions on Software Engineering",
     "type": "journal",
     "impact_factor": 9.3,
@@ -193,37 +705,156 @@
     ]
   },
   {
-    "canonical_name": "ICSE",
+    "canonical_name": "ACM Transactions on Software Engineering and Methodology",
+    "type": "journal",
+    "impact_factor": 6.6,
+    "aliases": [
+      "acm transactions on software engineering and methodology",
+      "tosem"
+    ]
+  },
+  {
+    "canonical_name": "ICRA",
+    "type": "conference",
+    "impact_factor": 20.0,
+    "aliases": [
+      "icra",
+      "ieee international conference on robotics and automation"
+    ]
+  },
+  {
+    "canonical_name": "IROS",
     "type": "conference",
     "impact_factor": 18.0,
     "aliases": [
-      "icse",
-      "international conference on software engineering",
-      "ieee/acm international conference on software engineering"
+      "iros",
+      "ieee/rsj international conference on intelligent robots and systems"
+    ]
+  },
+  {
+    "canonical_name": "Robotics: Science and Systems",
+    "type": "conference",
+    "impact_factor": 19.0,
+    "aliases": [
+      "robotics: science and systems",
+      "rss"
+    ]
+  },
+  {
+    "canonical_name": "CoRL",
+    "type": "conference",
+    "impact_factor": 18.0,
+    "aliases": [
+      "corl",
+      "conference on robot learning"
+    ]
+  },
+  {
+    "canonical_name": "IEEE Transactions on Robotics",
+    "type": "journal",
+    "impact_factor": 9.4,
+    "aliases": [
+      "ieee transactions on robotics",
+      "t-ro"
     ]
   },
   {
     "canonical_name": "Nature Energy",
     "type": "journal",
     "impact_factor": 56.7,
-    "aliases": ["nature energy", "nat energy"]
+    "aliases": [
+      "nature energy",
+      "nat energy"
+    ]
   },
   {
     "canonical_name": "Applied Energy",
     "type": "journal",
     "impact_factor": 11.2,
-    "aliases": ["applied energy", "appl energy"]
+    "aliases": [
+      "applied energy",
+      "appl energy"
+    ]
   },
   {
     "canonical_name": "IEEE Transactions on Smart Grid",
     "type": "journal",
     "impact_factor": 9.6,
-    "aliases": ["ieee transactions on smart grid", "ieee trans smart grid"]
+    "aliases": [
+      "ieee transactions on smart grid",
+      "ieee trans smart grid"
+    ]
   },
   {
     "canonical_name": "Renewable and Sustainable Energy Reviews",
     "type": "journal",
     "impact_factor": 15.9,
-    "aliases": ["renewable and sustainable energy reviews", "renew sustain energy rev"]
+    "aliases": [
+      "renewable and sustainable energy reviews",
+      "renew sustain energy rev"
+    ]
+  },
+  {
+    "canonical_name": "Energy",
+    "type": "journal",
+    "impact_factor": 9.0,
+    "aliases": [
+      "energy journal",
+      "energy"
+    ]
+  },
+  {
+    "canonical_name": "Energy Conversion and Management",
+    "type": "journal",
+    "impact_factor": 10.4,
+    "aliases": [
+      "energy conversion and management",
+      "energy convers manage"
+    ]
+  },
+  {
+    "canonical_name": "IEEE Transactions on Power Systems",
+    "type": "journal",
+    "impact_factor": 7.3,
+    "aliases": [
+      "ieee transactions on power systems",
+      "ieee trans power syst"
+    ]
+  },
+  {
+    "canonical_name": "IEEE Transactions on Sustainable Energy",
+    "type": "journal",
+    "impact_factor": 8.6,
+    "aliases": [
+      "ieee transactions on sustainable energy",
+      "ieee trans sustain energy"
+    ]
+  },
+  {
+    "canonical_name": "IEEE Transactions on Industrial Informatics",
+    "type": "journal",
+    "impact_factor": 12.3,
+    "aliases": [
+      "ieee transactions on industrial informatics",
+      "ieee trans ind inform"
+    ]
+  },
+  {
+    "canonical_name": "Journal of Cleaner Production",
+    "type": "journal",
+    "impact_factor": 11.1,
+    "aliases": [
+      "journal of cleaner production",
+      "j clean prod"
+    ]
+  },
+  {
+    "canonical_name": "Nature Sustainability",
+    "type": "journal",
+    "impact_factor": 27.6,
+    "aliases": [
+      "nature sustainability",
+      "nat sustain"
+    ]
   }
 ]
