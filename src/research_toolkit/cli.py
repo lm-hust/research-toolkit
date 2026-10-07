@@ -9,12 +9,11 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import click
 
 from research_toolkit.discovery.curation import CurationCheckpoint
-from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.discovery.query import QueryTranslator
 from research_toolkit.discovery.service import DiscoveryService
 from research_toolkit.synthesis.adapters import get_default_gateway
@@ -397,23 +396,7 @@ def expand(
 
     click.echo(f"Loading seed literature from Zotero collection: '{source_col}'...")
     zotero_mgr = ZoteroManager()
-    col_obj = zotero_mgr.client.get_or_create_collection(source_col)
-    items = zotero_mgr.client.get_collection_items(col_obj.key)
-
-    seeds: List[PaperCandidate] = []
-    for it in items:
-        data = it.get("data", {})
-        doi = data.get("DOI")
-        title = data.get("title") or "Untitled"
-        if title:
-            seeds.append(
-                PaperCandidate(
-                    paper_id=it.get("key", title[:10]),
-                    title=title,
-                    doi=doi,
-                    topological_role="seed",
-                )
-            )
+    seeds = zotero_mgr.get_collection_candidates(source_col)
 
     if not seeds:
         click.echo(f"⚠️ No papers found in collection '{source_col}'.", err=True)

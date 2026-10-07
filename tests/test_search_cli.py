@@ -215,10 +215,8 @@ class TestSearchCli(unittest.TestCase):
         mock_zotero_cls.return_value = mock_zotero
         mock_col_obj = MagicMock()
         mock_col_obj.key = "COL_123"
-        mock_zotero.client.get_or_create_collection.return_value = mock_col_obj
-        mock_zotero.client.get_collection_items.return_value = [
-            {"key": "ITEM_A", "data": {"title": "Seed A", "DOI": "10.1000/a"}}
-        ]
+        mock_seed = PaperCandidate(paper_id="seed_a", title="Seed A", doi="10.1000/a", topological_role="seed")
+        mock_zotero.get_collection_candidates.return_value = [mock_seed]
         mock_zotero.sync_to_collection.return_value = (mock_col_obj, MagicMock())
 
         mock_service = MagicMock()

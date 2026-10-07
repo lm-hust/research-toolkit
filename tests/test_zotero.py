@@ -389,6 +389,32 @@ class TestZoteroManager(unittest.TestCase):
         self.assertEqual(report.missing_items[0].key, "P2")
         self.assertEqual(report.missing_items[0].doi_url, "https://doi.org/10.1000/missing")
 
+    def test_get_collection_candidates(self):
+        """Verifies get_collection_candidates encapsulates item retrieval and maps to PaperCandidate."""
+        self.mock_client.get_or_create_collection.return_value = ZoteroCollection(
+            key="COL_SEEDS", name="My Seeds", user_id="123"
+        )
+        self.mock_client.get_collection_items.return_value = [
+            {
+                "key": "ITEM_1",
+                "data": {
+                    "title": "Seed Paper Title",
+                    "DOI": "10.1000/seed",
+                    "date": "2023",
+                    "publicationTitle": "Nature",
+                },
+            }
+        ]
+
+        candidates = self.manager.get_collection_candidates("My Seeds")
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].paper_id, "ITEM_1")
+        self.assertEqual(candidates[0].title, "Seed Paper Title")
+        self.assertEqual(candidates[0].doi, "10.1000/seed")
+        self.assertEqual(candidates[0].year, 2023)
+        self.assertEqual(candidates[0].venue, "Nature")
+        self.assertEqual(candidates[0].topological_role, "seed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -329,6 +329,38 @@ class OpenAlexClient:
                 candidates.append(cand)
         return candidates
 
+    def get_works_by_dois(self, dois: List[str]) -> List[PaperCandidate]:
+        """
+        Batch retrieves work entities for a list of DOIs via filter=doi:D1|D2|...
+        """
+        if not dois:
+            return []
+        clean_dois = [d.replace("https://doi.org/", "").strip() for d in dois if d.strip()]
+        if not clean_dois:
+            return []
+
+        candidates: List[PaperCandidate] = []
+        batch_size = 50
+        for i in range(0, len(clean_dois), batch_size):
+            chunk = clean_dois[i : i + batch_size]
+            filter_val = "|".join(chunk)
+            params = {
+                "filter": f"doi:{filter_val}",
+                "per_page": len(chunk),
+                "select": (
+                    "id,doi,title,abstract_inverted_index,cited_by_count,"
+                    "primary_location,type,publication_year,authorships,referenced_works"
+                ),
+            }
+            data = self._request("/works", params=params, timeout=30.0)
+            if not data:
+                continue
+            for item in data.get("results", []):
+                cand = self._parse_work_item(item)
+                if cand:
+                    candidates.append(cand)
+        return candidates
+
 
 class CrossrefClient:
     """

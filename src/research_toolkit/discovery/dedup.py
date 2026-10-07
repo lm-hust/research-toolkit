@@ -107,11 +107,9 @@ class Deduplicator:
             if not matched and c_arxiv and c_arxiv in self.arxiv_map:
                 matched = self.arxiv_map[c_arxiv]
 
-            # 3. Fuzzy Title Matching (within 1 publication year, only when IDs do not conflict)
-            if not matched and len(c_norm_title) > 8:
+            # 3. Fuzzy Title Matching (only when candidate has no DOI, conforming to CODING_STANDARDS.md)
+            if not matched and not c_doi and len(c_norm_title) > 8:
                 for existing_norm_title, existing_cand in self.title_list:
-                    if c_doi and existing_cand.doi and c_doi != existing_cand.doi:
-                        continue
                     if c_arxiv and existing_cand.arxiv_id and c_arxiv != existing_cand.arxiv_id:
                         continue
                     if candidate.year and existing_cand.year:

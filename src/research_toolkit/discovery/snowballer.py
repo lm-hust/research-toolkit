@@ -78,10 +78,9 @@ class CitationSnowballer:
         # batch-resolve them via OpenAlex to populate references
         missing_refs = [s for s in normalized_seeds if not s.referenced_works and s.doi]
         if missing_refs:
-            doi_filters = [f"doi:{m.doi}" for m in missing_refs if m.doi]
-            # Try looking up OpenAlex records for these DOIs
+            doi_list = [m.doi for m in missing_refs if m.doi]
             try:
-                resolved = self.oa_client.get_works_by_ids(doi_filters)
+                resolved = self.oa_client.get_works_by_dois(doi_list)
                 doi_to_resolved = {r.doi.lower().strip(): r for r in resolved if r.doi}
                 for s in missing_refs:
                     if s.doi and s.doi.lower().strip() in doi_to_resolved:
@@ -91,6 +90,22 @@ class CitationSnowballer:
                         seed_ids.add(s_id)
             except Exception as e:
                 logger.warning("Failed to resolve seed references in OpenAlex: %s", e)
+
+            # Crossref reference fallback for any seeds still lacking references
+            for s in missing_refs:
+                if not s.referenced_works and s.doi:
+                    try:
+                        cr_data = self.crossref_client.get_work(s.doi)
+                        if cr_data and cr_data.get("references"):
+                            deposited = [
+                                r["doi"]
+                                for r in cr_data["references"]
+                                if r.get("doi")
+                            ]
+                            if deposited:
+                                s.referenced_works = deposited
+                    except Exception as e:
+                        logger.debug("Crossref fallback failed for DOI %s: %s", s.doi, e)
 
         # Step 2: Backward Snowballing (Co-citation frequency analysis)
         ref_counter: collections.Counter[str] = collections.Counter()
@@ -128,12 +143,12 @@ class CitationSnowballer:
                     list(seed_ids), limit=max_forward
                 )
                 for cand in raw_forward:
-                    # Check how many seeds this paper cites
                     cand_refs = {self._normalize_oa_id(r) for r in cand.referenced_works}
                     coupling_count = len(cand_refs & seed_ids)
-                    cand.topological_role = "recent_advancement"
-                    cand.co_citation_count = max(1, coupling_count)
-                    recent_advancements.append(cand)
+                    cand.co_citation_count = coupling_count
+                    if coupling_count >= 2 or cand.is_review:
+                        cand.topological_role = "recent_advancement"
+                        recent_advancements.append(cand)
             except Exception as e:
                 logger.warning("Error fetching forward citations: %s", e)
 
