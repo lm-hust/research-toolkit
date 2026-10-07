@@ -652,7 +652,8 @@ def serve(host: str, port: int, reload: bool) -> None:
     import uvicorn
     click.echo(f"🚀 Starting Research Toolkit Dual-Stack Gateway on http://{host}:{port} ...")
     click.echo(f"   • OpenAPI Schema & Docs: http://{host}:{port}/docs")
-    click.echo(f"   • MCP SSE Endpoint     : http://{host}:{port}/mcp/sse")
+    click.echo(f"   • MCP Streamable HTTP  : http://{host}:{port}/mcp/http")
+    click.echo(f"   • MCP SSE (legacy)     : http://{host}:{port}/mcp/sse")
     uvicorn.run("research_toolkit.mcp.server:app", host=host, port=port, reload=reload)
 
 
