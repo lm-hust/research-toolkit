@@ -74,5 +74,34 @@ class TestVenueRegistry(unittest.TestCase):
         self.assertGreater(score_cvpr, 0.45)
 
 
+    def test_expanded_venues_lookup(self):
+        """Resolves premier venues from expanded CCF/JCR lists like ICML, ACL, and ACM CSUR."""
+        self.assertGreaterEqual(self.registry.get_impact("ICML"), 18.0)
+        self.assertGreaterEqual(self.registry.get_impact("ACL"), 15.0)
+        self.assertGreaterEqual(self.registry.get_impact("ACM Computing Surveys"), 15.0)
+
+    def test_dynamic_cache_lookup(self):
+        """When not in offline registry, checks local cache for source_id."""
+        import tempfile
+        from pathlib import Path
+        import json
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            cache_data = {
+                "https://openalex.org/S4306401280": {
+                    "impact": 7.8,
+                    "name": "Journal of Green Computing",
+                    "timestamp": 2000000000
+                }
+            }
+            tf.write(json.dumps(cache_data).encode("utf-8"))
+            tf_path = Path(tf.name)
+
+        registry_with_cache = VenueRegistry(cache_path=tf_path)
+        impact = registry_with_cache.get_impact("Unknown Venue", source_id="https://openalex.org/S4306401280")
+        self.assertEqual(impact, 7.8)
+        tf_path.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     unittest.main()

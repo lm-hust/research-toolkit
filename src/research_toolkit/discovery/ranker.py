@@ -7,7 +7,7 @@ Conforms to CONTEXT.md and ADR-0001.
 from __future__ import annotations
 
 import math
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.discovery.venue_registry import VenueRegistry
@@ -15,8 +15,8 @@ from research_toolkit.discovery.venue_registry import VenueRegistry
 
 class Ranker:
     """
-    Computes composite ranking scores and performs stratified two-tier selection
-    ensuring review papers lead the selection quota.
+    Computes composite ranking scores and performs flexible multi-modal selection.
+    Conforms to CONTEXT.md and ADR-0004.
     """
 
     def __init__(
@@ -55,15 +55,19 @@ class Ranker:
         else:
             s_cite = s_cite_raw
 
-        # 2. Venue quality (max of OpenAlex 2-yr citedness and offline VenueRegistry impact)
-        local_impact = self.venue_registry.get_impact(p.venue) if self.venue_registry else 0.0
+        # 2. Venue quality (max of OpenAlex 2-yr citedness and offline/cached VenueRegistry impact)
+        source_id = p.external_ids.get("openalex_source_id") if p.external_ids else None
+        local_impact = (
+            self.venue_registry.get_impact(p.venue, source_id=source_id)
+            if self.venue_registry
+            else 0.0
+        )
         effective_impact = max(p.venue_impact, local_impact)
         if effective_impact > 0:
             p.venue_impact = effective_impact
             s_venue = min(1.0, math.log1p(effective_impact) / math.log1p(self.if_cap))
         else:
             s_venue = 0.15  # Baseline for unindexed preprint/unknown venue
-
 
         # 3. Review paper boost with age decay
         b_review = 0.0
@@ -81,35 +85,54 @@ class Ranker:
         return p.composite_score
 
     def rank_and_select(
-        self, candidates: List[PaperCandidate], top_k: int = 8
+        self,
+        candidates: List[PaperCandidate],
+        top_k: int = 8,
+        sort_by: str = "composite",
+        min_cites: int = 0,
+        year_range: Optional[Tuple[int, int]] = None,
+        peer_reviewed_only: bool = False,
     ) -> List[PaperCandidate]:
         """
-        Two-tier stratified selection:
-        Guarantees top 25-30% slots for leading ReviewPapers,
-        followed by top composite breakthrough research papers.
+        Ranks and filters candidates by specified sorting mode and qualification thresholds.
+        Conforms to ADR-0004.
         """
-        for c in candidates:
+        filtered = list(candidates)
+
+        # 1. Hard filters
+        if min_cites > 0:
+            filtered = [c for c in filtered if (c.citation_count or 0) >= min_cites]
+
+        if year_range:
+            min_y, max_y = year_range
+            filtered = [c for c in filtered if c.year and min_y <= c.year <= max_y]
+
+        if peer_reviewed_only:
+            filtered = [
+                c
+                for c in filtered
+                if not (
+                    getattr(c, "is_preprint", False)
+                    or (c.venue and "arxiv" in c.venue.lower())
+                    or (c.arxiv_id and not c.doi)
+                )
+            ]
+
+        # 2. Score all remaining candidates
+        for c in filtered:
             self.score(c)
 
-        reviews = [c for c in candidates if c.is_review]
-        research = [c for c in candidates if not c.is_review]
+        # 3. Sort according to mode
+        mode = sort_by.lower()
+        if mode == "citations":
+            filtered.sort(
+                key=lambda x: (x.citation_count or 0, x.composite_score), reverse=True
+            )
+        elif mode == "recent":
+            filtered.sort(
+                key=lambda x: (x.year or 0, x.citation_count or 0, x.composite_score), reverse=True
+            )
+        else:  # default 'composite'
+            filtered.sort(key=lambda x: x.composite_score, reverse=True)
 
-        reviews.sort(key=lambda x: x.composite_score, reverse=True)
-        research.sort(key=lambda x: x.composite_score, reverse=True)
-
-        k_review = max(1, min(len(reviews), math.ceil(top_k * 0.25))) if reviews else 0
-        k_research = top_k - k_review
-
-        selected_reviews = reviews[:k_review]
-        selected_research = research[:k_research]
-
-        # Leading reviews placed first
-        final_selection = selected_reviews + selected_research
-
-        # Fill remaining slots if either category was underpopulated
-        if len(final_selection) < top_k:
-            remaining = [c for c in candidates if c not in final_selection]
-            remaining.sort(key=lambda x: x.composite_score, reverse=True)
-            final_selection.extend(remaining[: (top_k - len(final_selection))])
-
-        return final_selection[:top_k]
+        return filtered[:top_k]

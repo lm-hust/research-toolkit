@@ -51,43 +51,98 @@ class TestRanker(unittest.TestCase):
         score_old = self.ranker.score(old_review)
         self.assertGreater(score_fresh, score_old)
 
-    def test_two_tier_selection_guarantees_review_quota(self):
-        """When selecting top 8 papers, at least 25% (2 slots) must be top reviews."""
-        candidates = []
-        # Create 10 breakthrough research papers with very high citations
-        for i in range(10):
-            candidates.append(
-                PaperCandidate(
-                    paper_id=f"res_{i}",
-                    title=f"Breakthrough Research Paper {i}",
-                    year=2022,
-                    citation_count=5000 + i * 500,
-                    is_review=False,
-                    relevance_score=0.95
-                )
-            )
+    def test_review_paper_boost(self):
+        """Review papers receive a composite score boost over equivalent research papers."""
+        research = PaperCandidate(
+            paper_id="res",
+            title="Regular Research Paper",
+            year=2024,
+            citation_count=100,
+            is_review=False,
+            relevance_score=0.85
+        )
+        review = PaperCandidate(
+            paper_id="rev",
+            title="Review Paper",
+            year=2024,
+            citation_count=100,
+            is_review=True,
+            relevance_score=0.85
+        )
+        selected = self.ranker.rank_and_select([research, review], top_k=2)
+        self.assertEqual(selected[0].paper_id, "rev")
+        self.assertGreater(review.composite_score, research.composite_score)
 
-        # Create 3 review papers with moderate citations
-        for i in range(3):
-            candidates.append(
-                PaperCandidate(
-                    paper_id=f"rev_{i}",
-                    title=f"Comprehensive Review Paper {i}",
-                    year=2024,
-                    citation_count=150 + i * 50,
-                    is_review=True,
-                    relevance_score=0.85
-                )
-            )
 
-        selected = self.ranker.rank_and_select(candidates, top_k=8)
-        self.assertEqual(len(selected), 8)
+    def test_sort_by_citations(self):
+        """When sort_by='citations', results should strictly sort by citation_count descending."""
+        candidates = [
+            PaperCandidate(paper_id="low", title="Low Cite", year=2024, citation_count=5),
+            PaperCandidate(paper_id="high", title="High Cite", year=2020, citation_count=500),
+            PaperCandidate(paper_id="mid", title="Mid Cite", year=2022, citation_count=50),
+        ]
+        selected = self.ranker.rank_and_select(candidates, top_k=3, sort_by="citations")
+        self.assertEqual([p.paper_id for p in selected], ["high", "mid", "low"])
 
-        # The leading papers must include top reviews
-        review_count = sum(1 for p in selected if p.is_review)
-        self.assertGreaterEqual(review_count, 2)  # at least 25% of 8 = 2
-        # And review paper should be at rank #1
-        self.assertTrue(selected[0].is_review)
+    def test_sort_by_recent(self):
+        """When sort_by='recent', results should sort primarily by publication year descending."""
+        candidates = [
+            PaperCandidate(paper_id="old", title="Old Paper", year=2020, citation_count=1000),
+            PaperCandidate(paper_id="fresh", title="Fresh Paper", year=2025, citation_count=5),
+            PaperCandidate(paper_id="mid", title="Mid Paper", year=2023, citation_count=50),
+        ]
+        selected = self.ranker.rank_and_select(candidates, top_k=3, sort_by="recent")
+        self.assertEqual([p.paper_id for p in selected], ["fresh", "mid", "old"])
+
+    def test_min_cites_filtering(self):
+        """Filters out candidate papers with citation count below min_cites threshold."""
+        candidates = [
+            PaperCandidate(paper_id="p1", title="Paper 1", citation_count=100),
+            PaperCandidate(paper_id="p2", title="Paper 2", citation_count=2),
+            PaperCandidate(paper_id="p3", title="Paper 3", citation_count=20),
+        ]
+        selected = self.ranker.rank_and_select(candidates, top_k=5, min_cites=10)
+        self.assertEqual([p.paper_id for p in selected], ["p1", "p3"])
+
+    def test_peer_reviewed_filtering(self):
+        """Filters out preprints when peer_reviewed_only is True."""
+        candidates = [
+            PaperCandidate(paper_id="arxiv", title="arXiv Paper", venue="arXiv", citation_count=50),
+            PaperCandidate(paper_id="journal", title="IEEE Paper", venue="IEEE Trans", citation_count=20),
+        ]
+        selected = self.ranker.rank_and_select(candidates, top_k=5, peer_reviewed_only=True)
+        self.assertEqual([p.paper_id for p in selected], ["journal"])
+
+    def test_year_range_filtering(self):
+        """Filters papers outside the specified (min_year, max_year) interval."""
+        candidates = [
+            PaperCandidate(paper_id="too_old", title="2018 Paper", year=2018, citation_count=100),
+            PaperCandidate(paper_id="valid", title="2022 Paper", year=2022, citation_count=100),
+            PaperCandidate(paper_id="too_new", title="2026 Paper", year=2026, citation_count=100),
+        ]
+        selected = self.ranker.rank_and_select(candidates, top_k=5, year_range=(2020, 2024))
+        self.assertEqual([p.paper_id for p in selected], ["valid"])
+
+    def test_composite_global_ranking_without_forced_review_lock(self):
+        """Reviews get composite score bonus, but do not override globally higher scoring research papers."""
+        breakthrough = PaperCandidate(
+            paper_id="breakthrough",
+            title="Massive Breakthrough",
+            year=2024,
+            citation_count=500,
+            relevance_score=0.98,
+            is_review=False
+        )
+        obscure_review = PaperCandidate(
+            paper_id="review",
+            title="Obscure Survey",
+            year=2026,
+            citation_count=0,
+            relevance_score=0.5,
+            is_review=True
+        )
+        selected = self.ranker.rank_and_select([obscure_review, breakthrough], top_k=2, sort_by="composite")
+        self.assertEqual(selected[0].paper_id, "breakthrough")
 
 
 if __name__ == "__main__":

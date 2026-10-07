@@ -204,6 +204,45 @@ class TestZoteroManager(unittest.TestCase):
         self.assertNotIn("libproxy.ucl.ac.uk", item_data["url"])
         self.assertIn("COL_123", item_data["collections"])
 
+    def test_sync_candidates_persists_citations_extra_and_tags(self):
+        """Item payload includes citations in extra field and citation tier tags."""
+        col = ZoteroCollection(key="COL_123", name="AI Research")
+        self.mock_client.get_or_create_collection.return_value = col
+        self.mock_client.create_items.return_value = [{"key": "ITEM_001"}]
+
+        candidate = PaperCandidate(
+            paper_id="p1",
+            title="Highly Cited Paper",
+            year=2023,
+            citation_count=150,
+            influential_citation_count=25,
+            composite_score=0.885,
+            venue="Nature",
+            is_review=True,
+            doi="10.1038/nature12345",
+        )
+
+        self.manager.sync_candidates(
+            collection_name="AI Research",
+            candidates=[candidate],
+            auto_download_oa=False,
+        )
+
+        payload = self.mock_client.create_items.call_args[0][0]
+        item_data = payload[0]
+
+        # Verify extra field contains citations and score
+        self.assertIn("extra", item_data)
+        self.assertIn("Citations: 150", item_data["extra"])
+        self.assertIn("Influential Citations: 25", item_data["extra"])
+        self.assertIn("Discovery Score: 0.885", item_data["extra"])
+
+        # Verify citation tier tag
+        tags = [t["tag"] for t in item_data["tags"]]
+        self.assertIn("cites:>100", tags)
+        self.assertIn("type/review", tags)
+        self.assertIn("type/peer-reviewed", tags)
+
     def test_sync_to_collection_reuses_existing_items(self):
         """If a candidate already exists in Zotero, it is appended to collection without duplicating."""
         col = ZoteroCollection(key="COL_TARGET", name="GNN Research", user_id="12345")

@@ -44,15 +44,18 @@ class TestSearchCli(unittest.TestCase):
         mock_zotero_cls.return_value = mock_zotero
         mock_zotero.sync_to_collection.return_value = (self.mock_col, [{"key": "ITEM_1"}])
 
+        # Default mode: outputs candidate table, ID, and URL
         result = self.runner.invoke(cli, ["search", "Graph Neural Networks"])
-
         self.assertEqual(result.exit_code, 0)
         mock_zotero.sync_to_collection.assert_called_once()
-        # Compact mode: returns ID and URL
         self.assertIn("ID: COL_GNN_123", result.output)
         self.assertIn("URL: https://www.zotero.org/users/12345/collections/COL_GNN_123", result.output)
-        # Compact mode: does NOT output paper candidate table
-        self.assertNotIn("RANK | TYPE | TITLE", result.output)
+        self.assertIn("RANK | TYPE | TITLE", result.output)
+
+        # Quiet mode: does NOT output paper candidate table
+        result_quiet = self.runner.invoke(cli, ["search", "Graph Neural Networks", "--quiet"])
+        self.assertEqual(result_quiet.exit_code, 0)
+        self.assertNotIn("RANK | TYPE | TITLE", result_quiet.output)
 
     @patch("research_toolkit.cli.ZoteroManager")
     @patch("research_toolkit.cli.DiscoveryService")
@@ -140,6 +143,43 @@ class TestSearchCli(unittest.TestCase):
         self.assertNotIn(")", call_args_auto[0])
         self.assertNotIn("'", call_args_auto[0])
         self.assertTrue(call_args_auto[0].startswith("research/"))
+
+    @patch("research_toolkit.cli.ZoteroManager")
+    @patch("research_toolkit.cli.DiscoveryService")
+    def test_search_passes_sorting_and_filtering_flags(self, mock_service_cls, mock_zotero_cls):
+        mock_service = MagicMock()
+        mock_service_cls.return_value = mock_service
+        mock_service.search_and_rank.return_value = [self.mock_candidate]
+        mock_service.format_table.return_value = "RANK | TYPE | TITLE"
+
+        mock_zotero = MagicMock()
+        mock_zotero_cls.return_value = mock_zotero
+        mock_zotero.sync_to_collection.return_value = (self.mock_col, [{"key": "ITEM_1"}])
+
+        result = self.runner.invoke(
+            cli,
+            [
+                "search",
+                "Deep Learning",
+                "--sort",
+                "citations",
+                "--min-cites",
+                "25",
+                "--year",
+                "2021-2025",
+                "--peer-reviewed",
+            ],
+        )
+
+        self.assertEqual(result.exit_code, 0)
+        mock_service.search_and_rank.assert_called_once_with(
+            "Deep Learning",
+            top_k=8,
+            sort_by="citations",
+            min_cites=25,
+            year_range=(2021, 2025),
+            peer_reviewed_only=True,
+        )
 
 
 if __name__ == "__main__":

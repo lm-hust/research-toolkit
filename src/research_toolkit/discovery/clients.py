@@ -204,6 +204,9 @@ class OpenAlexClient:
             raw_doi = item.get("doi")
             doi_val = raw_doi.replace("https://doi.org/", "") if raw_doi else None
 
+            source_id = source_info.get("id") or ""
+            ext_ids = {"openalex_source_id": source_id} if source_id else {}
+
             candidate = PaperCandidate(
                 paper_id=item.get("id", f"oa_{title[:10]}"),
                 title=title,
@@ -218,6 +221,7 @@ class OpenAlexClient:
                 pdf_url=pdf_url,
                 source_platform="openalex",
                 relevance_score=0.85,
+                external_ids=ext_ids,
             )
             candidates.append(candidate)
 

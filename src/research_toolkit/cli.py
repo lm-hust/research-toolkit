@@ -75,6 +75,25 @@ def cli() -> None:
     pass
 
 
+def parse_year_range(year_str: Optional[str]) -> Optional[tuple[int, int]]:
+    """Parses year filter strings like '2020-2025', '2023+', or '2024' into (min_year, max_year)."""
+    if not year_str:
+        return None
+    val = year_str.strip()
+    try:
+        if "-" in val:
+            parts = val.split("-", 1)
+            return (int(parts[0].strip()), int(parts[1].strip()))
+        elif val.endswith("+"):
+            return (int(val[:-1].strip()), 9999)
+        else:
+            y = int(val)
+            return (y, y)
+    except ValueError:
+        logger.warning("Invalid year filter format: '%s'. Expected YYYY, YYYY-YYYY, or YYYY+.", year_str)
+        return None
+
+
 @cli.command()
 @click.argument("query")
 @click.option(
@@ -97,7 +116,7 @@ def cli() -> None:
     "-d",
     is_flag=True,
     default=False,
-    help="Display detailed table of retrieved paper candidates.",
+    help="Display detailed table of retrieved paper candidates (default: True).",
 )
 @click.option(
     "--json",
@@ -112,6 +131,38 @@ def cli() -> None:
     default=False,
     help="Perform discovery and ranking dry-run without writing to Zotero.",
 )
+@click.option(
+    "--sort",
+    "-s",
+    type=click.Choice(["composite", "citations", "recent"], case_sensitive=False),
+    default="composite",
+    help="Ranking order: composite (balanced), citations (most cited), recent (newest).",
+)
+@click.option(
+    "--min-cites",
+    default=0,
+    type=int,
+    help="Minimum citation count threshold.",
+)
+@click.option(
+    "--year",
+    "-y",
+    default=None,
+    help="Publication year filter (e.g., 2020-2025, 2023+, or 2024).",
+)
+@click.option(
+    "--peer-reviewed",
+    is_flag=True,
+    default=False,
+    help="Filter out unreviewed preprints (e.g. arXiv).",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress table output in terminal.",
+)
 def search(
     query: str,
     topic: Optional[str],
@@ -119,13 +170,26 @@ def search(
     detail: bool,
     as_json: bool,
     dry_run: bool,
+    sort: str,
+    min_cites: int,
+    year: Optional[str],
+    peer_reviewed: bool,
+    quiet: bool,
 ) -> None:
     """Search literature and rank candidates across Semantic Scholar and OpenAlex."""
-    if not as_json and detail:
+    if not as_json and not quiet:
         click.echo(f"Searching literature for: '{query}'...")
 
+    y_range = parse_year_range(year)
     service = DiscoveryService()
-    candidates = service.search_and_rank(query, top_k=limit)
+    candidates = service.search_and_rank(
+        query,
+        top_k=limit,
+        sort_by=sort,
+        min_cites=min_cites,
+        year_range=y_range,
+        peer_reviewed_only=peer_reviewed,
+    )
 
     if not candidates:
         if as_json:
@@ -137,8 +201,8 @@ def search(
     # Derive canonical ZoteroCollection name
     col_name = QueryTranslator.to_collection_name(query, topic)
 
-    # Print table if detailed view requested and not JSON mode
-    if detail and not as_json:
+    # Print table by default unless JSON mode or --quiet passed
+    if not as_json and not quiet:
         table_output = service.format_table(candidates)
         click.echo(table_output)
 

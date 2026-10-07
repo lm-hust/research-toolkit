@@ -6,7 +6,7 @@ DiscoveryService coordinating clients, deduplication, and ranking.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from research_toolkit.discovery.clients import OpenAlexClient, SemanticScholarClient
 from research_toolkit.discovery.dedup import Deduplicator
@@ -32,11 +32,18 @@ class DiscoveryService:
         self.ranker = ranker or Ranker()
 
     def search_and_rank(
-        self, topic: str, top_k: int = 8, limit_per_source: Optional[int] = None
+        self,
+        topic: str,
+        top_k: int = 8,
+        limit_per_source: Optional[int] = None,
+        sort_by: str = "composite",
+        min_cites: int = 0,
+        year_range: Optional[Tuple[int, int]] = None,
+        peer_reviewed_only: bool = False,
     ) -> List[PaperCandidate]:
         """
         Retrieves candidates from Semantic Scholar and OpenAlex, deduplicates them,
-        and returns the top-k candidates ranked with review quota guarantees.
+        and returns the top-k candidates ranked with specified sorting and filtering.
         """
         query_limit = limit_per_source or max(15, top_k * 2)
 
@@ -48,7 +55,14 @@ class DiscoveryService:
             return []
 
         deduped = self.deduplicator.process(combined)
-        ranked = self.ranker.rank_and_select(deduped, top_k=top_k)
+        ranked = self.ranker.rank_and_select(
+            deduped,
+            top_k=top_k,
+            sort_by=sort_by,
+            min_cites=min_cites,
+            year_range=year_range,
+            peer_reviewed_only=peer_reviewed_only,
+        )
         return ranked
 
     def format_table(self, candidates: List[PaperCandidate]) -> str:
@@ -75,7 +89,18 @@ class DiscoveryService:
             table.add_column("DOI / Identifier", min_width=20)
 
             for idx, p in enumerate(candidates, start=1):
-                doc_type = "[REV]" if p.is_review else "[RES]"
+                is_preprint = (
+                    getattr(p, "is_preprint", False)
+                    or (p.venue and "arxiv" in p.venue.lower())
+                    or (p.arxiv_id and not p.doi)
+                )
+                if p.is_review:
+                    doc_type = "[REV]"
+                elif is_preprint:
+                    doc_type = "[PRE]"
+                else:
+                    doc_type = "[RES]"
+
                 doi_or_id = p.doi or p.arxiv_id or p.paper_id
                 title_disp = (p.title[:55] + "...") if len(p.title) > 58 else p.title
                 venue_disp = (p.venue[:22] + "...") if len(p.venue) > 25 else (p.venue or "-")

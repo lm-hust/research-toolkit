@@ -1,28 +1,38 @@
 """
 src/research_toolkit/discovery/venue_registry.py
-Offline registry mapping top-tier journals and premier CS conferences to standardized impact factors.
-Conforms to CONTEXT.md.
+Hybrid registry mapping top-tier journals, CS conferences, and cached OpenAlex 2-year citedness metrics.
+Conforms to CONTEXT.md and ADR-0004.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import time
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 DATA_PATH = Path(__file__).parent / "data" / "venues.json"
+CACHE_PATH = Path.home() / ".cache" / "research-toolkit" / "venues_cache.json"
 
 
 class VenueRegistry:
-    """Offline lookup repository for top-tier journals and premier conferences."""
+    """Hybrid lookup repository and caching layer for top-tier venues and OpenAlex impact factors."""
 
-    def __init__(self, data_path: Optional[Path] = None):
+    def __init__(
+        self,
+        data_path: Optional[Path] = None,
+        cache_path: Optional[Path] = None,
+    ):
         self.data_path = data_path or DATA_PATH
+        self.cache_path = cache_path or CACHE_PATH
         self.venues: List[Dict[str, Any]] = self._load_data()
+        self._cache: Dict[str, Any] = self._load_cache()
 
     def _load_data(self) -> List[Dict[str, Any]]:
         if not self.data_path.exists():
@@ -33,6 +43,50 @@ class VenueRegistry:
         except Exception as e:
             logger.error("Failed to load venues.json: %s", e)
             return []
+
+    def _load_cache(self) -> Dict[str, Any]:
+        if not self.cache_path.exists():
+            return {}
+        try:
+            return json.loads(self.cache_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.debug("Failed to load venues cache: %s", e)
+            return {}
+
+    def _save_cache(self) -> None:
+        try:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self.cache_path.write_text(json.dumps(self._cache, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.debug("Failed to write venues cache: %s", e)
+
+    def _fetch_openalex_source_impact(self, source_id: str) -> float:
+        clean_id = source_id.split("/")[-1].strip()
+        if not clean_id.startswith("S"):
+            return 0.0
+
+        api_key = os.getenv("OPENALEX_API_KEY")
+        url = f"https://api.openalex.org/sources/{clean_id}"
+        if api_key:
+            url += f"?api_key={api_key}"
+
+        req = urllib.request.Request(url, headers={"User-Agent": "ResearchToolkit/0.1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                summary_stats = data.get("summary_stats") or {}
+                impact = float(summary_stats.get("2yr_mean_citedness") or 0.0)
+                name = data.get("display_name") or ""
+                self._cache[source_id] = {
+                    "impact": impact,
+                    "name": name,
+                    "timestamp": time.time(),
+                }
+                self._save_cache()
+                return impact
+        except Exception as e:
+            logger.debug("Could not fetch OpenAlex source impact for %s: %s", clean_id, e)
+            return 0.0
 
     @staticmethod
     def normalize_name(text: str) -> str:
@@ -50,11 +104,7 @@ class VenueRegistry:
         s = re.sub(r"[^a-z0-9\s]", " ", s)
         return re.sub(r"\s+", " ", s).strip()
 
-    def get_impact(self, venue_name: str) -> float:
-        """
-        Resolves a venue string to its standardized impact factor metric.
-        Returns 0.0 if no top-tier venue match is found.
-        """
+    def _lookup_offline(self, venue_name: str) -> float:
         if not venue_name or not venue_name.strip():
             return 0.0
 
@@ -94,3 +144,23 @@ class VenueRegistry:
                     break
 
         return best_impact
+
+    def get_impact(self, venue_name: str, source_id: Optional[str] = None) -> float:
+        """
+        Resolves a venue string or OpenAlex source ID to its standardized impact factor metric.
+        Checks offline registry first, then local cache / dynamic fetch.
+        """
+        impact = self._lookup_offline(venue_name)
+        if impact > 0.0:
+            return impact
+
+        if source_id:
+            cached = self._cache.get(source_id)
+            if cached and isinstance(cached, dict):
+                # 30 days TTL = 2592000s
+                ts = float(cached.get("timestamp", 0))
+                if time.time() - ts < 2592000:
+                    return float(cached.get("impact", 0.0))
+            return self._fetch_openalex_source_impact(source_id)
+
+        return 0.0

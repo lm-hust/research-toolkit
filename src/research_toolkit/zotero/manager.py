@@ -128,6 +128,35 @@ class ZoteroManager:
             if c.is_review:
                 tags.append({"tag": "type/review"})
 
+            # Publication type tag
+            is_preprint = (
+                getattr(c, "is_preprint", False)
+                or (c.venue and "arxiv" in c.venue.lower())
+                or (c.arxiv_id and not c.doi)
+            )
+            if is_preprint:
+                tags.append({"tag": "type/preprint"})
+            else:
+                tags.append({"tag": "type/peer-reviewed"})
+
+            # Citation tier tag
+            cites = c.citation_count or 0
+            if cites >= 100:
+                tags.append({"tag": "cites:>100"})
+            elif cites >= 50:
+                tags.append({"tag": "cites:>50"})
+            elif cites >= 10:
+                tags.append({"tag": "cites:>10"})
+            else:
+                tags.append({"tag": "cites:0-9"})
+
+            extra_lines = [
+                f"Citations: {cites}",
+                f"Influential Citations: {c.influential_citation_count or 0}",
+                f"Discovery Score: {c.composite_score:.3f}" if c.composite_score else "Discovery Score: 0.000",
+            ]
+            extra_text = "\n".join(extra_lines)
+
             url = f"https://doi.org/{clean_doi}" if clean_doi else (c.pdf_url or "")
 
             item_data = {
@@ -139,6 +168,7 @@ class ZoteroManager:
                 "date": str(c.year) if c.year else "",
                 "DOI": clean_doi or "",
                 "url": url,
+                "extra": extra_text,
                 "tags": tags,
                 "collections": [col_key],
             }
