@@ -166,6 +166,8 @@ PYTHONPATH=src python3 -m research_toolkit.cli mcp-schema
 
 ## 🐳 Docker / 远程 VPS 一键部署 (ADR-0003 & ADR-0006)
 
+> ⚠️ 远程网关已按 [ADR-0007](docs/adr/0007-local-first-agent-execution.md) 冻结、不再部署。日常请在本地 agent（Claude Code / Antigravity CLI）里直接使用 CLI；以下内容仅作存档。
+
 本项目提供 **Toolkit 双协议栈服务 + Caddy 自动化 TLS 反向代理** 的标准编排，专为无头 Linux VPS（如 `do-vps`）打造：
 
 ```bash

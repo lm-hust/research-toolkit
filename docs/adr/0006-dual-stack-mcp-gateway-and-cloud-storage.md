@@ -1,5 +1,7 @@
 # 6. Dual-Stack MCP Gateway and Zotero Cloud Storage Resolution
 
+> **Status:** Gateway (§1, §2, §4) frozen and undeployed by [ADR-0007](0007-local-first-agent-execution.md). §3 CloudStorageResolver remains in force.
+
 We expose the research toolkit via a unified dual-stack daemon supporting both Model Context Protocol (MCP) Server-Sent Events (SSE) and OpenAPI 3.0 REST endpoints, coupled with automatic Zotero Cloud Storage resolution for headless VPS execution.
 
 ## Context
