@@ -6,9 +6,10 @@ Tests for Semantic Scholar and OpenAlex retrieval clients.
 import json
 import unittest
 from unittest.mock import MagicMock, patch
+
 from research_toolkit.discovery.clients import (
-    SemanticScholarClient,
     OpenAlexClient,
+    SemanticScholarClient,
     reconstruct_openalex_abstract,
 )
 

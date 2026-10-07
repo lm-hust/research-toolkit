@@ -11,10 +11,9 @@ from research_toolkit.mcp.tools import (
     ask_notebook,
     get_tools_manifest,
     search_literature,
-    sync_notebook,
     verify_checkpoint,
 )
-from research_toolkit.synthesis.models import DistilledEvidence, GroundedAnswer, NotebookInfo
+from research_toolkit.synthesis.models import DistilledEvidence, GroundedAnswer
 from research_toolkit.zotero.models import CheckpointReport, ZoteroItem
 
 

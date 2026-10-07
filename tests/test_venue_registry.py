@@ -82,9 +82,9 @@ class TestVenueRegistry(unittest.TestCase):
 
     def test_dynamic_cache_lookup(self):
         """When not in offline registry, checks local cache for source_id."""
+        import json
         import tempfile
         from pathlib import Path
-        import json
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
             cache_data = {

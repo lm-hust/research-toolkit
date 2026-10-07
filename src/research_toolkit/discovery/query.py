@@ -44,11 +44,12 @@ class QueryTranslator:
         return " ".join(tokens).strip()
 
     @staticmethod
-    def to_openalex(query: str) -> str:
+    def to_openalex(query: str, max_phrases: int = 4) -> str:
         """
         Translates query for OpenAlex works search.
         OpenAlex supports phrase quotes and space-separated term search.
         Removes negation and boolean connector keywords to prevent literal matching.
+        Limits quoted phrases to prevent over-constraining the search space.
         """
         if not query:
             return ""
@@ -62,8 +63,23 @@ class QueryTranslator:
         # Remove boolean connectors
         text = re.sub(r"\b(AND|OR)\b", " ", text, flags=re.IGNORECASE)
 
-        # Collapse multiple spaces
-        return re.sub(r"\s+", " ", text).strip()
+        # Extract tokens and unquote phrases beyond max_phrases budget
+        tokens = []
+        quoted_count = 0
+        for match in re.finditer(r'("[^"]+"|\S+)', text):
+            token = match.group(0).strip()
+            if token.startswith('"') and token.endswith('"'):
+                quoted_count += 1
+                if quoted_count <= max_phrases:
+                    tokens.append(token)
+                else:
+                    inner = token[1:-1].strip()
+                    if inner:
+                        tokens.append(inner)
+            else:
+                tokens.append(token)
+
+        return " ".join(tokens).strip()
 
     @staticmethod
     def to_topic_slug(query: str) -> str:

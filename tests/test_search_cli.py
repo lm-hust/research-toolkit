@@ -6,6 +6,7 @@ Tests for the search CLI command, automatic Zotero sync, compact output, and --d
 import json
 import unittest
 from unittest.mock import MagicMock, patch
+
 from click.testing import CliRunner
 
 from research_toolkit.cli import cli

@@ -5,11 +5,11 @@ Unit tests for CLI commands: sync-notebook and ask.
 
 import json
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 from click.testing import CliRunner
 
-from research_toolkit.cli import cli, STATE_FILE
+from research_toolkit.cli import STATE_FILE, cli
 from research_toolkit.synthesis.models import (
     DistilledEvidence,
     GroundedAnswer,

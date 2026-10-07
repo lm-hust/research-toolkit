@@ -4,8 +4,9 @@ Tests for 3-tier paper deduplication (DOI -> ArXiv -> Fuzzy Title).
 """
 
 import unittest
-from research_toolkit.discovery.models import PaperCandidate
+
 from research_toolkit.discovery.dedup import Deduplicator
+from research_toolkit.discovery.models import PaperCandidate
 
 
 class TestDeduplicator(unittest.TestCase):

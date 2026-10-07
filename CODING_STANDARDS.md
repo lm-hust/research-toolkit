@@ -14,3 +14,7 @@ Review standards for research-toolkit changes. Enforced during code review.
 - **Non-destructive Collection Attachment**: Associating an existing library item with a target collection must use `PATCH /items/<key>` with `If-Unmodified-Since-Version` to append only `collections`. Never mutate or overwrite existing titles, abstracts, notes, user tags, or attachment links.
 - **Deduplication Matching Hierarchy**: Match by canonical DOI first. Only fall back to normalized title when the candidate paper has no DOI. When a candidate has a DOI that is not found in the library, return `None` to prevent false positive title collisions.
 - **Domain Vocabulary**: Strictly adhere to `CONTEXT.md` terms. Use "collection", never "folder".
+
+## Skills & Agent Interface
+
+- **Skill & Agent Capability Synchronization**: When CLI commands, options, or domain interfaces evolve (e.g., new ranking flags, export formats), associated agent skills under `skills/` (such as `lit-scout`) must be updated in tandem to map natural language intents to the new capabilities.

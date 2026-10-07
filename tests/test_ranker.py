@@ -4,6 +4,7 @@ Tests for composite scoring and two-tier stratified selection.
 """
 
 import unittest
+
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.discovery.ranker import Ranker
 

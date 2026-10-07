@@ -6,6 +6,7 @@ DiscoveryService coordinating clients, deduplication, and ranking.
 from __future__ import annotations
 
 import logging
+import re
 from typing import List, Optional, Tuple
 
 from research_toolkit.discovery.clients import OpenAlexClient, SemanticScholarClient
@@ -44,6 +45,7 @@ class DiscoveryService:
         """
         Retrieves candidates from Semantic Scholar and OpenAlex, deduplicates them,
         and returns the top-k candidates ranked with specified sorting and filtering.
+        Includes automatic query relaxation fallback if complex boolean queries return 0 results.
         """
         query_limit = limit_per_source or max(15, top_k * 2)
 
@@ -51,6 +53,18 @@ class DiscoveryService:
         oa_candidates = self.oa_client.search(topic, limit=query_limit)
 
         combined = list(s2_candidates) + list(oa_candidates)
+        if not combined:
+            # Auto-relax retry if complex query with quotes or boolean operators yielded 0 results
+            if '"' in topic or any(kw in topic for kw in ("AND", "OR", "(", ")")):
+                relaxed = re.sub(r'["\'()]', " ", topic)
+                relaxed = re.sub(r"\b(AND|OR|NOT)\b", " ", relaxed, flags=re.IGNORECASE)
+                relaxed_topic = " ".join(relaxed.split())
+                if relaxed_topic and relaxed_topic != topic:
+                    logger.info("Zero initial results; auto-relaxing query to: %s", relaxed_topic)
+                    s2_retry = self.s2_client.search(relaxed_topic, limit=query_limit)
+                    oa_retry = self.oa_client.search(relaxed_topic, limit=query_limit)
+                    combined = list(s2_retry) + list(oa_retry)
+
         if not combined:
             return []
 

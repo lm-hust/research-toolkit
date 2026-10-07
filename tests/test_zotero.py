@@ -5,17 +5,17 @@ and FulltextCheckpoint.
 """
 
 import json
-import os
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.zotero.client import ZoteroClient
 from research_toolkit.zotero.manager import ZoteroManager
-from research_toolkit.zotero.models import CheckpointReport, ZoteroCollection, ZoteroItem
+from research_toolkit.zotero.models import ZoteroCollection, ZoteroItem
 
 
 class TestZoteroClient(unittest.TestCase):
@@ -75,6 +75,7 @@ class TestZoteroClient(unittest.TestCase):
 
         found = client.find_existing_item(doi="https://doi.org/10.1016/j.gnn.2023")
         self.assertIsNotNone(found)
+        assert found is not None
         self.assertEqual(found["key"], "EXISTING_KEY")
 
     @patch("urllib.request.urlopen")
@@ -112,6 +113,7 @@ class TestZoteroClient(unittest.TestCase):
 
         found = client.find_existing_item(doi=None, title="Graph Attention Networks")
         self.assertIsNotNone(found)
+        assert found is not None
         self.assertEqual(found["key"], "TITLE_MATCH_KEY")
 
     @patch("urllib.request.urlopen")
@@ -123,7 +125,7 @@ class TestZoteroClient(unittest.TestCase):
         mock_resp.__enter__.return_value = mock_resp
         mock_urlopen.return_value = mock_resp
 
-        raw_item = {
+        raw_item: dict[str, Any] = {
             "key": "ITEM_KEY_1",
             "version": 12,
             "data": {
@@ -187,7 +189,7 @@ class TestZoteroManager(unittest.TestCase):
             abstract="We present graph attention networks...",
         )
 
-        created_items = self.manager.sync_candidates(
+        self.manager.sync_candidates(
             collection_name="GNN Research",
             candidates=[candidate],
             auto_download_oa=False,
