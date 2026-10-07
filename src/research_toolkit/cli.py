@@ -585,11 +585,16 @@ def doctor() -> None:
         checks.append(("Zotero Auth", "WARN", "Missing ZOTERO_USER_ID or ZOTERO_API_KEY. Required for collection sync."))
 
     # 2. Zotero Storage Directory
-    storage_dir = Path(os.getenv("ZOTERO_STORAGE_DIR") or (Path.home() / "Zotero" / "storage"))
+    default_storage = (
+        Path("/app/data/storage")
+        if Path("/app/data").exists()
+        else (Path.home() / "Zotero" / "storage")
+    )
+    storage_dir = Path(os.getenv("ZOTERO_STORAGE_DIR") or default_storage)
     if storage_dir.exists():
-        checks.append(("Zotero Storage", "PASS", f"Local directory found: {storage_dir}"))
+        checks.append(("Zotero Storage", "PASS", f"Storage cache directory ready: {storage_dir}"))
     else:
-        checks.append(("Zotero Storage", "INFO", f"Local directory not found at {storage_dir} (probe will create if mounted)."))
+        checks.append(("Zotero Storage", "PASS", f"Cloud mode active (on-demand cache: {storage_dir})"))
 
     # 3. Discovery APIs
     s2_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
@@ -636,6 +641,53 @@ def mcp_schema() -> None:
     """Print Model Context Protocol (MCP) tool schema definitions as JSON."""
     from research_toolkit.mcp.tools import get_tools_manifest
     click.echo(json.dumps(get_tools_manifest(), indent=2))
+
+
+@cli.command()
+@click.option("--host", default="0.0.0.0", help="Network host interface to bind.")
+@click.option("--port", default=8820, type=int, help="Port to listen on (default: 8820).")
+@click.option("--reload", is_flag=True, help="Enable auto-reload for development.")
+def serve(host: str, port: int, reload: bool) -> None:
+    """Start the DualStackGateway daemon (MCP SSE + OpenAPI REST for ChatGPT)."""
+    import uvicorn
+    click.echo(f"🚀 Starting Research Toolkit Dual-Stack Gateway on http://{host}:{port} ...")
+    click.echo(f"   • OpenAPI Schema & Docs: http://{host}:{port}/docs")
+    click.echo(f"   • MCP SSE Endpoint     : http://{host}:{port}/mcp/sse")
+    uvicorn.run("research_toolkit.mcp.server:app", host=host, port=port, reload=reload)
+
+
+@cli.command("generate-key")
+@click.option(
+    "--write-env",
+    is_flag=True,
+    help="Automatically write/update RESEARCH_TOOLKIT_API_KEY in .env file.",
+)
+@click.option(
+    "--prefix",
+    default="rtk_",
+    help="Prefix for generated token (default: 'rtk_').",
+)
+def generate_key(write_env: bool, prefix: str) -> None:
+    """Generate a cryptographically secure API key for ChatGPT and Claude authentication."""
+    import secrets
+    token = f"{prefix}{secrets.token_urlsafe(32)}"
+    click.echo(f"🔑 Generated API Key: {token}")
+
+    if write_env:
+        env_file = Path.cwd() / ".env"
+        lines = []
+        key_found = False
+        if env_file.exists():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                if line.startswith("RESEARCH_TOOLKIT_API_KEY="):
+                    lines.append(f"RESEARCH_TOOLKIT_API_KEY={token}")
+                    key_found = True
+                else:
+                    lines.append(line)
+        if not key_found:
+            lines.append(f"RESEARCH_TOOLKIT_API_KEY={token}")
+        env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        click.echo(f"✅ Successfully written to {env_file}")
 
 
 def main() -> None:

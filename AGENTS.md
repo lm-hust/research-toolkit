@@ -7,6 +7,7 @@
 - `src/research_toolkit/zotero/`: Personal library sync, collection management, duplicate reconciliation, and full-text PDF resolution.
 - `src/research_toolkit/synthesis/`: NotebookLM grounded synthesis and note exports.
 - `src/research_toolkit/config.py`: Environment loader with Git worktree fallback to parent `.env`.
+- `src/research_toolkit/mcp/`: Dual-stack gateway (MCP SSE and OpenAPI REST), server daemon, and tool definitions.
 
 ### Standards & Review
 - Coding standards: see `CODING_STANDARDS.md`.

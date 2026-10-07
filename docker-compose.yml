@@ -16,13 +16,29 @@ services:
       - toolkit-cache:/root/.cache/research-toolkit
       # Optional: mount host Obsidian vault (read/write)
       # - /home/ling/vault/PKM:/app/vault
+    ports:
+      # Expose locally or for direct access if Caddy is bypassed
+      - "127.0.0.1:${PORT:-8820}:8820"
     stdin_open: true
     tty: true
-    # For interactive CLI execution:
-    # docker compose run --rm toolkit search "Graph Neural Networks"
-    # docker compose run --rm toolkit checkpoint
-    # docker compose run --rm toolkit sync-notebook
-    # docker compose run --rm toolkit ask "Summarize the key findings"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: research_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DUCKDNS_DOMAIN=${DUCKDNS_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - toolkit
 
 volumes:
   toolkit-cache:
+  caddy-data:
+  caddy-config:

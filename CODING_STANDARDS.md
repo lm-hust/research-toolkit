@@ -18,3 +18,9 @@ Review standards for research-toolkit changes. Enforced during code review.
 ## Skills & Agent Interface
 
 - **Skill & Agent Capability Synchronization**: When CLI commands, options, or domain interfaces evolve (e.g., new ranking flags, export formats), associated agent skills under `skills/` (such as `lit-scout`) must be updated in tandem to map natural language intents to the new capabilities.
+
+## Remote Gateway & Ingress Invariants
+
+- **Perimeter Authentication**: All external gateway endpoints under `/api/v1/*` and `/mcp/*` must mandate Bearer Token authorization when `RESEARCH_TOOLKIT_API_KEY` is configured.
+- **Headless Attachment Resolution**: On environments lacking local storage, full-text attachments must resolve non-destructively through `ZoteroClient.download_item_file` to local cache before blocking synthesis pipelines.
+

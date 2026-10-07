@@ -1,0 +1,12 @@
+# Caddy reverse proxy for Research Toolkit Dual-Stack Gateway
+# Automatically provisions Let's Encrypt TLS certificate for your DuckDNS domain
+
+{$DUCKDNS_DOMAIN:localhost} {
+    encode gzip zstd
+
+    # Route all traffic to the research-toolkit container
+    reverse_proxy toolkit:8820 {
+        # Disable response buffering so MCP Server-Sent Events (SSE) stream in real time
+        flush_interval -1
+    }
+}

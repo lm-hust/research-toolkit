@@ -34,9 +34,12 @@ class ZoteroManager:
         storage_dir: Optional[Path] = None,
     ):
         self.client = client or ZoteroClient()
-        self.storage_dir = Path(
-            storage_dir or os.getenv("ZOTERO_STORAGE_DIR") or (Path.home() / "Zotero" / "storage")
+        default_storage = (
+            Path("/app/data/storage")
+            if Path("/app/data").exists()
+            else (Path.home() / "Zotero" / "storage")
         )
+        self.storage_dir = Path(storage_dir or os.getenv("ZOTERO_STORAGE_DIR") or default_storage)
 
     def find_local_pdf(self, attachment_key: str) -> Optional[Path]:
         """Probes ~/Zotero/storage/<attachment_key>/*.pdf directly on disk."""
@@ -52,6 +55,24 @@ class ZoteroManager:
             if pdf.is_file() and pdf.stat().st_size > 0:
                 return pdf
         return None
+
+    def resolve_attachment_pdf(
+        self, attachment_key: str, auto_download_cloud: bool = True
+    ) -> Optional[Path]:
+        """
+        Resolves local PDF attachment path. If missing on disk and auto_download_cloud is True,
+        downloads the attachment file directly from Zotero Cloud Storage into the local cache.
+        """
+        local_path = self.find_local_pdf(attachment_key)
+        if local_path:
+            return local_path
+
+        if not auto_download_cloud or not attachment_key:
+            return None
+
+        # CloudStorageResolver: Download directly from Zotero Cloud Storage into local cache
+        target_file = self.storage_dir / attachment_key / f"{attachment_key}.pdf"
+        return self.client.download_item_file(attachment_key, target_file)
 
     def get_or_create_collection(self, collection_name: str) -> ZoteroCollection:
         """Retrieves or creates a Zotero collection in the personal library."""
@@ -279,11 +300,14 @@ class ZoteroManager:
         return reconciled, duplicate_count
 
     def scan_collection_checkpoint(
-        self, collection_key: str, collection_name: str = ""
+        self,
+        collection_key: str,
+        collection_name: str = "",
+        auto_download_cloud: bool = True,
     ) -> CheckpointReport:
         """
-        Scans a collection for full-text PDF attachments on disk and partitions
-        items into ready and missing sets.
+        Scans a collection for full-text PDF attachments on disk (or resolves from Zotero Cloud)
+        and partitions items into ready and missing sets.
         """
         raw_items = self.client.get_collection_items(collection_key)
 
@@ -313,7 +337,7 @@ class ZoteroManager:
                     tags=tags,
                 )
 
-        # Associate PDF attachments with parent items
+        # Associate PDF attachments with parent items (probing disk or resolving from cloud)
         for p_key, item in parent_items.items():
             child_attachments = attachments.get(p_key, [])
             for att in child_attachments:
@@ -323,10 +347,12 @@ class ZoteroManager:
 
                 if "pdf" in content_type.lower() or att_data.get("filename", "").endswith(".pdf"):
                     item.attachment_key = att_key
-                    local_pdf = self.find_local_pdf(att_key)
-                    if local_pdf:
+                    resolved_pdf = self.resolve_attachment_pdf(
+                        att_key, auto_download_cloud=auto_download_cloud
+                    )
+                    if resolved_pdf:
                         item.has_pdf = True
-                        item.pdf_path = str(local_pdf)
+                        item.pdf_path = str(resolved_pdf)
                         break
 
         # Reconcile duplicates
