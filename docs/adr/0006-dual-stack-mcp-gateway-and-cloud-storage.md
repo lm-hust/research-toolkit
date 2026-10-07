@@ -10,11 +10,13 @@ Furthermore, on a headless VPS without desktop Zotero, relying solely on local d
 ## Decision
 1. **DualStackGateway Architecture**:
    - Implement `research_toolkit.mcp.server` powered by FastAPI and FastMCP.
-   - Serve MCP SSE endpoints at `/mcp/sse` and `/mcp/messages/` for Claude Desktop and MCP clients.
+   - Serve MCP Streamable HTTP at `/mcp/http` (stateless) as the primary MCP transport, used by claude.ai custom connectors.
+   - Keep the legacy MCP SSE endpoints at `/mcp/sse` and `/mcp/messages/` for older MCP clients.
    - Serve standard OpenAPI 3.0 REST endpoints at `/api/v1/search`, `/api/v1/checkpoint`, `/api/v1/sync-notebook`, and `/api/v1/ask` alongside `/openapi.json` for ChatGPT Actions.
 2. **Perimeter Authentication**:
    - Enforce Bearer Token authorization (`RESEARCH_TOOLKIT_API_KEY`) on all execution endpoints.
    - Expose public discovery docs (`/openapi.json`, `/health`, `/docs`) to permit zero-friction schema ingestion by ChatGPT.
+   - MCP transports also accept `?token=<key>` because claude.ai custom connectors cannot send custom headers (only OAuth or no auth). Only Streamable HTTP keeps the token on every request; SSE clients must use the header, since the server-issued `/mcp/messages/` URL drops the query string.
 3. **CloudStorageResolver for Zotero**:
    - Enhance `ZoteroClient` and `ZoteroManager` with on-demand attachment downloads via the official Zotero Web API (`GET /users/{user_id}/items/{item_key}/file`).
    - If an attachment PDF is missing locally on disk during `scan_collection_checkpoint` or `sync_notebook`, fetch it directly from Zotero Cloud Storage into the local cache (`/app/data/storage/{key}/`).

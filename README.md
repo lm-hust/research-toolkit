@@ -155,7 +155,7 @@ PYTHONPATH=src python3 -m research_toolkit.cli ask "这些文献中关于 GNN �
 # 一键生成安全 API 密钥并直接写入 .env
 PYTHONPATH=src python3 -m research_toolkit.cli generate-key --write-env
 
-# 启动双协议栈网关守护进程（默认端口 8820，MCP SSE + OpenAPI REST）
+# 启动双协议栈网关守护进程（默认端口 8820，MCP Streamable HTTP / SSE + OpenAPI REST）
 PYTHONPATH=src python3 -m research_toolkit.cli serve --port 8820
 
 # 导出 MCP 工具 Schema JSON
@@ -193,7 +193,13 @@ curl https://your_subdomain.duckdns.org/health
    - 点击 **Import from URL**，输入：`https://<your_subdomain>.duckdns.org/openapi.json`。
    - 自动解析出 `search`, `checkpoint`, `sync-notebook`, `ask` 四大能力！
 
-#### 2. Claude Desktop (MCP SSE)
+#### 2. claude.ai 网页端 / 移动端（自定义连接器，MCP Streamable HTTP）
+claude.ai 的自定义连接器无法设置自定义请求头，因此把密钥放在 URL 查询参数里：
+1. 进入 **Settings → Connectors → Add custom connector**。
+2. **Remote MCP server URL** 填：`https://<your_subdomain>.duckdns.org/mcp/http?token=your_secret_key`
+3. OAuth 相关字段留空。
+
+#### 3. Claude Desktop / Claude Code（MCP SSE 或 Streamable HTTP）
 在 `~/Library/Application Support/Claude/claude_desktop_config.json`（或 Linux/Windows 对应路径）中加入：
 ```json
 {
@@ -207,7 +213,7 @@ curl https://your_subdomain.duckdns.org/health
   }
 }
 ```
-*(同时支持在 URL 后携带参数：`https://<your_subdomain>.duckdns.org/mcp/sse?token=your_secret_key`)*
+*(也可把 `url` 换成 Streamable HTTP 端点 `https://<your_subdomain>.duckdns.org/mcp/http`。SSE 传输只能使用 `Authorization` 请求头：服务端回传的 `/mcp/messages/` 地址不携带 `?token=`。)*
 
 
 ---
