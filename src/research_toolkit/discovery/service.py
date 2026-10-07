@@ -13,12 +13,13 @@ from research_toolkit.discovery.clients import OpenAlexClient, SemanticScholarCl
 from research_toolkit.discovery.dedup import Deduplicator
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.discovery.ranker import Ranker
+from research_toolkit.discovery.snowballer import CitationSnowballer
 
 logger = logging.getLogger(__name__)
 
 
 class DiscoveryService:
-    """Coordinates multi-source literature retrieval, deduplication, and stratified ranking."""
+    """Coordinates multi-source literature retrieval, deduplication, graph snowballing, and stratified ranking."""
 
     def __init__(
         self,
@@ -26,11 +27,13 @@ class DiscoveryService:
         oa_client: Optional[OpenAlexClient] = None,
         deduplicator: Optional[Deduplicator] = None,
         ranker: Optional[Ranker] = None,
+        snowballer: Optional[CitationSnowballer] = None,
     ):
         self.s2_client = s2_client or SemanticScholarClient()
         self.oa_client = oa_client or OpenAlexClient()
         self.deduplicator = deduplicator or Deduplicator()
         self.ranker = ranker or Ranker()
+        self.snowballer = snowballer or CitationSnowballer(oa_client=self.oa_client)
 
     def search_and_rank(
         self,
@@ -41,11 +44,13 @@ class DiscoveryService:
         min_cites: int = 0,
         year_range: Optional[Tuple[int, int]] = None,
         peer_reviewed_only: bool = False,
+        snowball: bool = True,
+        min_co_cites: int = 1,
     ) -> List[PaperCandidate]:
         """
         Retrieves candidates from Semantic Scholar and OpenAlex, deduplicates them,
+        optionally executes 1-hop bidirectional citation snowballing across OpenAlex,
         and returns the top-k candidates ranked with specified sorting and filtering.
-        Includes automatic query relaxation fallback if complex boolean queries return 0 results.
         """
         query_limit = limit_per_source or max(15, top_k * 2)
 
@@ -69,8 +74,27 @@ class DiscoveryService:
             return []
 
         deduped = self.deduplicator.process(combined)
+
+        # 1-Hop Citation Snowballing expansion
+        if snowball and deduped:
+            try:
+                # Use up to 6 highest-relevance initial seeds for graph expansion
+                seed_batch = deduped[:6]
+                snowball_res = self.snowballer.snowball(
+                    seed_batch,
+                    min_co_citations=min_co_cites,
+                    max_backward=15,
+                    max_forward=15,
+                )
+                candidates_to_rank = snowball_res.all_candidates
+            except Exception as e:
+                logger.warning("Citation snowballing failed, falling back to direct seeds: %s", e)
+                candidates_to_rank = deduped
+        else:
+            candidates_to_rank = deduped
+
         ranked = self.ranker.rank_and_select(
-            deduped,
+            candidates_to_rank,
             top_k=top_k,
             sort_by=sort_by,
             min_cites=min_cites,

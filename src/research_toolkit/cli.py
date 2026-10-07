@@ -13,6 +13,7 @@ from typing import Optional
 
 import click
 
+from research_toolkit.discovery.curation import CurationCheckpoint
 from research_toolkit.discovery.query import QueryTranslator
 from research_toolkit.discovery.service import DiscoveryService
 from research_toolkit.synthesis.adapters import get_default_gateway
@@ -134,9 +135,9 @@ def parse_year_range(year_str: Optional[str]) -> Optional[tuple[int, int]]:
 @click.option(
     "--sort",
     "-s",
-    type=click.Choice(["composite", "citations", "recent"], case_sensitive=False),
+    type=click.Choice(["composite", "citations", "recent", "topological"], case_sensitive=False),
     default="composite",
-    help="Ranking order: composite (balanced), citations (most cited), recent (newest).",
+    help="Ranking order: composite (balanced), citations (most cited), recent (newest), topological (most co-cited).",
 )
 @click.option(
     "--min-cites",
@@ -157,6 +158,24 @@ def parse_year_range(year_str: Optional[str]) -> Optional[tuple[int, int]]:
     help="Filter out unreviewed preprints (e.g. arXiv).",
 )
 @click.option(
+    "--snowball/--no-snowball",
+    default=True,
+    help="Enable 1-hop bidirectional citation snowballing (default: True).",
+)
+@click.option(
+    "--interactive/--non-interactive",
+    "-i/-I",
+    "interactive",
+    default=None,
+    help="Interactive CurationCheckpoint multi-selection (default: auto).",
+)
+@click.option(
+    "--yes",
+    is_flag=True,
+    default=False,
+    help="Accept all candidates without prompting (alias for --non-interactive).",
+)
+@click.option(
     "--quiet",
     "-q",
     is_flag=True,
@@ -174,6 +193,9 @@ def search(
     min_cites: int,
     year: Optional[str],
     peer_reviewed: bool,
+    snowball: bool,
+    interactive: Optional[bool],
+    yes: bool,
     quiet: bool,
 ) -> None:
     """Search literature and rank candidates across Semantic Scholar and OpenAlex."""
@@ -189,6 +211,7 @@ def search(
         min_cites=min_cites,
         year_range=y_range,
         peer_reviewed_only=peer_reviewed,
+        snowball=snowball,
     )
 
     if not candidates:
@@ -201,10 +224,26 @@ def search(
     # Derive canonical ZoteroCollection name
     col_name = QueryTranslator.to_collection_name(query, topic)
 
-    # Print table by default unless JSON mode or --quiet passed
+    # Interactive CurationCheckpoint
+    is_interactive = (
+        False
+        if (yes or interactive is False)
+        else (
+            True
+            if interactive is True
+            else (sys.stdin.isatty() and not dry_run and not as_json and not quiet)
+        )
+    )
     if not as_json and not quiet:
-        table_output = service.format_table(candidates)
-        click.echo(table_output)
+        if is_interactive:
+            checkpoint = CurationCheckpoint()
+            candidates = checkpoint.review(candidates, interactive=True)
+            if not candidates:
+                click.echo("CurationCheckpoint aborted. No papers were committed.")
+                return
+        else:
+            table_output = service.format_table(candidates)
+            click.echo(table_output)
 
     if dry_run:
         if as_json:
@@ -282,6 +321,121 @@ def search(
     else:
         click.echo(f"ID: {collection.key}")
         click.echo(f"URL: {collection.web_url}")
+
+
+@cli.command("expand")
+@click.argument("collection", required=False)
+@click.option(
+    "--target",
+    "-t",
+    default=None,
+    help="Target Zotero collection name (default: append to source collection).",
+)
+@click.option(
+    "--limit",
+    "-k",
+    default=10,
+    type=int,
+    help="Number of core candidates to discover (default: 10).",
+)
+@click.option(
+    "--min-co-cites",
+    default=1,
+    type=int,
+    help="Minimum co-citation threshold (default: 1).",
+)
+@click.option(
+    "--sort",
+    "-s",
+    type=click.Choice(
+        ["composite", "topological", "citations", "recent"], case_sensitive=False
+    ),
+    default="topological",
+    help="Ranking order: topological (default), composite, citations, recent.",
+)
+@click.option(
+    "--interactive/--non-interactive",
+    "-i/-I",
+    "interactive",
+    default=None,
+    help="Interactive CurationCheckpoint multi-selection (default: auto).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    default=False,
+    help="Accept all candidates without prompting.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Perform expansion dry-run without writing to Zotero.",
+)
+def expand(
+    collection: Optional[str],
+    target: Optional[str],
+    limit: int,
+    min_co_cites: int,
+    sort: str,
+    interactive: Optional[bool],
+    yes: bool,
+    dry_run: bool,
+) -> None:
+    """Expand an existing Zotero collection via bidirectional citation snowballing."""
+    session = load_session()
+    source_col = collection or session.get("active_collection")
+
+    if not source_col:
+        click.echo(
+            "⚠️ No collection specified. Provide [COLLECTION] or run search first.",
+            err=True,
+        )
+        sys.exit(1)
+
+    click.echo(f"Loading seed literature from Zotero collection: '{source_col}'...")
+    zotero_mgr = ZoteroManager()
+    seeds = zotero_mgr.get_collection_candidates(source_col)
+
+    if not seeds:
+        click.echo(f"⚠️ No papers found in collection '{source_col}'.", err=True)
+        return
+
+    click.echo(f"Found {len(seeds)} seed papers. Executing citation snowballing...")
+    service = DiscoveryService()
+    snowball_res = service.snowballer.snowball(
+        seeds, min_co_citations=min_co_cites, max_backward=20, max_forward=20
+    )
+
+    ranked = service.ranker.rank_and_select(
+        snowball_res.all_candidates, top_k=limit, sort_by=sort
+    )
+
+    is_interactive = (
+        False
+        if (yes or interactive is False)
+        else (True if interactive is True else (sys.stdin.isatty() and not dry_run))
+    )
+    if is_interactive:
+        checkpoint = CurationCheckpoint()
+        curated = checkpoint.review(ranked, interactive=True)
+    else:
+        table_output = service.format_table(ranked)
+        click.echo(table_output)
+        curated = ranked
+
+    if not curated:
+        click.echo("Curation aborted. No papers added.")
+        return
+
+    if dry_run:
+        click.echo(f"\n[dry-run] Discovered {len(curated)} core papers. No changes committed.")
+        return
+
+    dest_col = target or source_col
+    _, sync_res = zotero_mgr.sync_to_collection(dest_col, curated)
+    click.echo(f"🎉 Successfully expanded and synced {len(curated)} papers to '{dest_col}'!")
 
 
 @cli.command()

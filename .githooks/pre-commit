@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "==> [Pre-commit Hook] Running verification checks..."
+./scripts/check.sh

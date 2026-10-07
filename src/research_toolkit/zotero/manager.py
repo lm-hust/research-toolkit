@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -101,6 +102,36 @@ class ZoteroManager:
         )
         return collection, sync_result
 
+    def get_collection_candidates(self, collection_name: str) -> List[PaperCandidate]:
+        """
+        Retrieves all items from a collection and transforms them into domain PaperCandidates.
+        Conforms to CODING_STANDARDS.md (encapsulated client access).
+        """
+        collection = self.client.get_or_create_collection(collection_name)
+        items = self.client.get_collection_items(collection.key)
+        candidates: List[PaperCandidate] = []
+        for it in items:
+            data = it.get("data", {})
+            title = data.get("title") or "Untitled"
+            doi = Deduplicator.clean_doi(data.get("DOI"))
+            year_val = None
+            date_str = data.get("date") or ""
+            if date_str:
+                match = re.search(r"\b(19\d\d|20\d\d)\b", date_str)
+                if match:
+                    year_val = int(match.group(1))
+            candidates.append(
+                PaperCandidate(
+                    paper_id=it.get("key", title[:10]),
+                    title=title,
+                    year=year_val,
+                    venue=data.get("publicationTitle") or "",
+                    doi=doi,
+                    topological_role="seed",
+                )
+            )
+        return candidates
+
     def _parse_author_name(self, name_str: str) -> Dict[str, str]:
         parts = name_str.strip().split()
         if len(parts) > 1:
@@ -143,9 +174,24 @@ class ZoteroManager:
             if cites >= 100:
                 tags.append({"tag": "cites:>100"})
 
+            # Topological role tags
+            if c.topological_role == "foundational":
+                tags.append({"tag": "topo/foundational"})
+            elif c.topological_role in ("recent_advancement", "sota"):
+                tags.append({"tag": "topo/recent-advancement"})
+
+            if c.co_citation_count > 0:
+                tags.append({"tag": f"co-cites:>={c.co_citation_count}"})
+
             inf = c.influential_citation_count or 0
             score = c.composite_score or 0.0
-            extra_text = f"Citations: {cites} | Influential: {inf} | Score: {score:.3f}"
+            if c.co_citation_count > 0:
+                extra_text = (
+                    f"Citations: {cites} | Co-Cites: {c.co_citation_count} | "
+                    f"Role: {c.topological_role} | Score: {score:.3f}"
+                )
+            else:
+                extra_text = f"Citations: {cites} | Influential: {inf} | Score: {score:.3f}"
 
             url = f"https://doi.org/{clean_doi}" if clean_doi else (c.pdf_url or "")
 

@@ -29,6 +29,10 @@ class PaperCandidate:
     relevance_score: float = 0.0  # Normalized [0.0, 1.0]
     external_ids: Dict[str, str] = field(default_factory=dict)
     composite_score: float = 0.0
+    co_citation_count: int = 0
+    topological_role: str = ""  # 'seed', 'foundational', 'recent_advancement'
+    topological_score: float = 0.0
+    referenced_works: List[str] = field(default_factory=list)
     _is_preprint: Optional[bool] = field(default=None, repr=False)
 
     PREPRINT_VENUES = (

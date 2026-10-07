@@ -18,6 +18,10 @@ _Avoid_: Survey paper, overview doc
 The scoring component that computes composite weightings across citation count, journal impact proxy (OpenAlex 2-year citedness / JCR lookup), and review tier.
 _Avoid_: Sorter, filter
 
+**CitationSnowballer**:
+The graph expansion engine that traverses 1-hop backward references (co-citation) and forward citations (bibliographic coupling) across OpenAlex and Crossref for a set of seed PaperCandidates.
+_Avoid_: Paper crawler, link expander, spider
+
 **VenueRegistry**:
 The hybrid repository and caching layer mapping top-tier journals, CS conferences, and dynamic OpenAlex 2-year citedness metrics to standardized impact factors.
 _Avoid_: Journal list, conference DB
@@ -29,8 +33,12 @@ _Avoid_: Journal list, conference DB
 A designated target collection within the user's Zotero personal library storing PaperCandidates for a specific topic or task.
 _Avoid_: Folder, category, tag
 
+**CurationCheckpoint**:
+The human-in-the-loop terminal boundary where expanded candidate papers from CitationSnowballer are presented with topological tags and composite ranks for interactive researcher screening before insertion.
+_Avoid_: Paper picker, candidate selector
+
 **FulltextCheckpoint**:
-The workflow boundary between paper insertion and NotebookLM synchronization, allowing automated open-access resolution or manual UCL institutional PDF collection.
+The subsequent workflow boundary between curated paper insertion and NotebookLM synchronization, resolving automated open-access PDFs or manual UCL institutional access.
 _Avoid_: PDF wait, sync pause
 
 ### Notebook & Gateway
