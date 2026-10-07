@@ -6,9 +6,10 @@ Tests for Semantic Scholar and OpenAlex retrieval clients.
 import json
 import unittest
 from unittest.mock import MagicMock, patch
+
 from research_toolkit.discovery.clients import (
-    SemanticScholarClient,
     OpenAlexClient,
+    SemanticScholarClient,
     reconstruct_openalex_abstract,
 )
 
@@ -191,6 +192,29 @@ class TestClients(unittest.TestCase):
         self.assertNotIn("oa_chapter_1", paper_ids)
         self.assertIn("oa_conf_1", paper_ids)
         self.assertIn("oa_journal_1", paper_ids)
+
+    @patch("urllib.request.urlopen")
+    def test_openalex_client_get_source_impact(self, mock_urlopen):
+        """Verifies get_source_impact retrieves 2yr_mean_citedness via unified _request."""
+        source_response = {
+            "id": "https://openalex.org/S12345",
+            "display_name": "IEEE Transactions on Smart Grid",
+            "summary_stats": {
+                "2yr_mean_citedness": 9.62
+            }
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(source_response).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        client = OpenAlexClient()
+        impact = client.get_source_impact("https://openalex.org/S12345")
+        self.assertAlmostEqual(impact, 9.62, places=2)
+
+    def test_openalex_client_get_source_impact_invalid_id(self):
+        """Returns 0.0 without network call when source ID is invalid."""
+        client = OpenAlexClient()
+        self.assertEqual(client.get_source_impact("invalid_source_id"), 0.0)
 
 
 if __name__ == "__main__":

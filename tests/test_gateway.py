@@ -11,15 +11,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from research_toolkit.synthesis.models import (
-    DistilledEvidence,
-    GroundedAnswer,
-    NotebookInfo,
-    NotebookSource,
-)
 from research_toolkit.synthesis.adapters import (
-    NotebookLMPyAdapter,
     GeminiGroundingFallbackAdapter,
+    NotebookLMPyAdapter,
     get_default_gateway,
 )
 

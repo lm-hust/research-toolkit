@@ -69,3 +69,18 @@ def test_query_translator_to_collection_name():
     assert col_name.startswith("research/")
     assert "(" not in col_name
     assert '"' not in col_name
+
+
+def test_query_translator_to_openalex_phrase_budget():
+    """Ensures queries with more quoted phrases than budget are unquoted beyond the limit."""
+    query = '("phrase one" OR "phrase two") AND ("phrase three" OR "phrase four" OR "phrase five")'
+    oa = QueryTranslator.to_openalex(query, max_phrases=3)
+    # The first 3 should retain quotes
+    assert '"phrase one"' in oa
+    assert '"phrase two"' in oa
+    assert '"phrase three"' in oa
+    # Phrases beyond 3 should be unquoted to keep search broad
+    assert '"phrase four"' not in oa
+    assert "phrase four" in oa
+    assert '"phrase five"' not in oa
+    assert "phrase five" in oa

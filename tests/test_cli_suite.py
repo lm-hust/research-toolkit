@@ -4,8 +4,8 @@ Integration tests for CLI suite: doctor, mcp-schema, and help outputs.
 """
 
 import json
-import os
 import unittest
+
 from click.testing import CliRunner
 
 from research_toolkit.cli import cli

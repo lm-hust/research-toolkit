@@ -19,7 +19,7 @@ The scoring component that computes composite weightings across citation count, 
 _Avoid_: Sorter, filter
 
 **VenueRegistry**:
-The offline repository of top-tier academic journals (Nature, Science, IEEE Trans) and premier computer science conferences (NeurIPS, CVPR, ICLR), mapping aliases to standardized impact factor metrics.
+The hybrid repository and caching layer mapping top-tier journals, CS conferences, and dynamic OpenAlex 2-year citedness metrics to standardized impact factors.
 _Avoid_: Journal list, conference DB
 
 

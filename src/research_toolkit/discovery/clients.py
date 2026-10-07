@@ -11,9 +11,10 @@ import logging
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.discovery.query import QueryTranslator
@@ -153,6 +154,46 @@ class OpenAlexClient:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("OPENALEX_API_KEY")
 
+    def _request(
+        self, endpoint: str, params: Optional[Dict[str, Any]] = None, timeout: float = 30.0
+    ) -> Optional[Dict[str, Any]]:
+        """Unified outbound request channel conforming to CODING_STANDARDS.md."""
+        query_params = dict(params or {})
+        if self.api_key:
+            query_params["api_key"] = self.api_key
+
+        url = f"{self.BASE_URL}{endpoint}"
+        if query_params:
+            url = f"{url}?{urllib.parse.urlencode(query_params)}"
+
+        headers = {"User-Agent": "ResearchToolkit/0.1.0"}
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                logger.info("OpenAlex pool rate limit (HTTP 429).")
+            else:
+                logger.warning("OpenAlex request to %s failed: %s", endpoint, e)
+            return None
+        except Exception as e:
+            logger.warning("OpenAlex request to %s failed: %s", endpoint, e)
+            return None
+
+    def get_source_impact(self, source_id: str) -> float:
+        """Fetches 2-year mean citedness for an OpenAlex source ID (e.g. S4306401280)."""
+        clean_id = source_id.split("/")[-1].strip()
+        if not clean_id.startswith("S"):
+            return 0.0
+
+        data = self._request(f"/sources/{clean_id}", timeout=5.0)
+        if not data:
+            return 0.0
+
+        summary_stats = data.get("summary_stats") or {}
+        return float(summary_stats.get("2yr_mean_citedness") or 0.0)
+
     def search(self, query: str, limit: int = 10) -> List[PaperCandidate]:
         clean_query = QueryTranslator.to_openalex(query) or query
         params = {
@@ -163,18 +204,8 @@ class OpenAlexClient:
                 "primary_location,type,publication_year,authorships"
             ),
         }
-        if self.api_key:
-            params["api_key"] = self.api_key
-
-        url = f"{self.BASE_URL}/works?{urllib.parse.urlencode(params)}"
-        headers = {"User-Agent": "ResearchToolkit/0.1.0"}
-
-        req = urllib.request.Request(url, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except Exception as e:
-            logger.warning("OpenAlex search failed: %s", e)
+        data = self._request("/works", params=params, timeout=30.0)
+        if not data:
             return []
 
         candidates: List[PaperCandidate] = []
@@ -204,6 +235,9 @@ class OpenAlexClient:
             raw_doi = item.get("doi")
             doi_val = raw_doi.replace("https://doi.org/", "") if raw_doi else None
 
+            source_id = source_info.get("id") or ""
+            ext_ids = {"openalex_source_id": source_id} if source_id else {}
+
             candidate = PaperCandidate(
                 paper_id=item.get("id", f"oa_{title[:10]}"),
                 title=title,
@@ -218,6 +252,7 @@ class OpenAlexClient:
                 pdf_url=pdf_url,
                 source_platform="openalex",
                 relevance_score=0.85,
+                external_ids=ext_ids,
             )
             candidates.append(candidate)
 

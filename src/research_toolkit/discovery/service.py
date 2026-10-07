@@ -6,7 +6,8 @@ DiscoveryService coordinating clients, deduplication, and ranking.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+import re
+from typing import List, Optional, Tuple
 
 from research_toolkit.discovery.clients import OpenAlexClient, SemanticScholarClient
 from research_toolkit.discovery.dedup import Deduplicator
@@ -32,11 +33,19 @@ class DiscoveryService:
         self.ranker = ranker or Ranker()
 
     def search_and_rank(
-        self, topic: str, top_k: int = 8, limit_per_source: Optional[int] = None
+        self,
+        topic: str,
+        top_k: int = 8,
+        limit_per_source: Optional[int] = None,
+        sort_by: str = "composite",
+        min_cites: int = 0,
+        year_range: Optional[Tuple[int, int]] = None,
+        peer_reviewed_only: bool = False,
     ) -> List[PaperCandidate]:
         """
         Retrieves candidates from Semantic Scholar and OpenAlex, deduplicates them,
-        and returns the top-k candidates ranked with review quota guarantees.
+        and returns the top-k candidates ranked with specified sorting and filtering.
+        Includes automatic query relaxation fallback if complex boolean queries return 0 results.
         """
         query_limit = limit_per_source or max(15, top_k * 2)
 
@@ -45,10 +54,29 @@ class DiscoveryService:
 
         combined = list(s2_candidates) + list(oa_candidates)
         if not combined:
+            # Auto-relax retry if complex query with quotes or boolean operators yielded 0 results
+            if '"' in topic or any(kw in topic for kw in ("AND", "OR", "(", ")")):
+                relaxed = re.sub(r'["\'()]', " ", topic)
+                relaxed = re.sub(r"\b(AND|OR|NOT)\b", " ", relaxed, flags=re.IGNORECASE)
+                relaxed_topic = " ".join(relaxed.split())
+                if relaxed_topic and relaxed_topic != topic:
+                    logger.info("Zero initial results; auto-relaxing query to: %s", relaxed_topic)
+                    s2_retry = self.s2_client.search(relaxed_topic, limit=query_limit)
+                    oa_retry = self.oa_client.search(relaxed_topic, limit=query_limit)
+                    combined = list(s2_retry) + list(oa_retry)
+
+        if not combined:
             return []
 
         deduped = self.deduplicator.process(combined)
-        ranked = self.ranker.rank_and_select(deduped, top_k=top_k)
+        ranked = self.ranker.rank_and_select(
+            deduped,
+            top_k=top_k,
+            sort_by=sort_by,
+            min_cites=min_cites,
+            year_range=year_range,
+            peer_reviewed_only=peer_reviewed_only,
+        )
         return ranked
 
     def format_table(self, candidates: List[PaperCandidate]) -> str:
@@ -75,7 +103,13 @@ class DiscoveryService:
             table.add_column("DOI / Identifier", min_width=20)
 
             for idx, p in enumerate(candidates, start=1):
-                doc_type = "[REV]" if p.is_review else "[RES]"
+                if p.is_review:
+                    doc_type = "[REV]"
+                elif p.is_preprint:
+                    doc_type = "[PRE]"
+                else:
+                    doc_type = "[RES]"
+
                 doi_or_id = p.doi or p.arxiv_id or p.paper_id
                 title_disp = (p.title[:55] + "...") if len(p.title) > 58 else p.title
                 venue_disp = (p.venue[:22] + "...") if len(p.venue) > 25 else (p.venue or "-")
@@ -97,7 +131,12 @@ class DiscoveryService:
             headers = ["#", "Type", "Title", "Year", "Cites", "Score", "DOI"]
             rows = []
             for idx, p in enumerate(candidates, start=1):
-                doc_type = "[REV]" if p.is_review else "[RES]"
+                if p.is_review:
+                    doc_type = "[REV]"
+                elif p.is_preprint:
+                    doc_type = "[PRE]"
+                else:
+                    doc_type = "[RES]"
                 doi_disp = p.doi or p.arxiv_id or p.paper_id
                 title_disp = (p.title[:45] + "...") if len(p.title) > 48 else p.title
                 rows.append([

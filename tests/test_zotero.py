@@ -5,17 +5,17 @@ and FulltextCheckpoint.
 """
 
 import json
-import os
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.zotero.client import ZoteroClient
 from research_toolkit.zotero.manager import ZoteroManager
-from research_toolkit.zotero.models import CheckpointReport, ZoteroCollection, ZoteroItem
+from research_toolkit.zotero.models import ZoteroCollection, ZoteroItem
 
 
 class TestZoteroClient(unittest.TestCase):
@@ -75,6 +75,7 @@ class TestZoteroClient(unittest.TestCase):
 
         found = client.find_existing_item(doi="https://doi.org/10.1016/j.gnn.2023")
         self.assertIsNotNone(found)
+        assert found is not None
         self.assertEqual(found["key"], "EXISTING_KEY")
 
     @patch("urllib.request.urlopen")
@@ -112,6 +113,7 @@ class TestZoteroClient(unittest.TestCase):
 
         found = client.find_existing_item(doi=None, title="Graph Attention Networks")
         self.assertIsNotNone(found)
+        assert found is not None
         self.assertEqual(found["key"], "TITLE_MATCH_KEY")
 
     @patch("urllib.request.urlopen")
@@ -123,7 +125,7 @@ class TestZoteroClient(unittest.TestCase):
         mock_resp.__enter__.return_value = mock_resp
         mock_urlopen.return_value = mock_resp
 
-        raw_item = {
+        raw_item: dict[str, Any] = {
             "key": "ITEM_KEY_1",
             "version": 12,
             "data": {
@@ -187,7 +189,7 @@ class TestZoteroManager(unittest.TestCase):
             abstract="We present graph attention networks...",
         )
 
-        created_items = self.manager.sync_candidates(
+        self.manager.sync_candidates(
             collection_name="GNN Research",
             candidates=[candidate],
             auto_download_oa=False,
@@ -203,6 +205,45 @@ class TestZoteroManager(unittest.TestCase):
         self.assertEqual(item_data["url"], "https://doi.org/10.48550/arxiv.1710.10903")
         self.assertNotIn("libproxy.ucl.ac.uk", item_data["url"])
         self.assertIn("COL_123", item_data["collections"])
+
+    def test_sync_candidates_persists_citations_extra_and_tags(self):
+        """Item payload includes citations in extra field and citation tier tags."""
+        col = ZoteroCollection(key="COL_123", name="AI Research")
+        self.mock_client.get_or_create_collection.return_value = col
+        self.mock_client.create_items.return_value = [{"key": "ITEM_001"}]
+
+        candidate = PaperCandidate(
+            paper_id="p1",
+            title="Highly Cited Paper",
+            year=2023,
+            citation_count=150,
+            influential_citation_count=25,
+            composite_score=0.885,
+            venue="Nature",
+            is_review=True,
+            doi="10.1038/nature12345",
+        )
+
+        self.manager.sync_candidates(
+            collection_name="AI Research",
+            candidates=[candidate],
+            auto_download_oa=False,
+        )
+
+        payload = self.mock_client.create_items.call_args[0][0]
+        item_data = payload[0]
+
+        # Verify extra field contains citations and score per ADR-0004
+        self.assertIn("extra", item_data)
+        self.assertEqual(item_data["extra"], "Citations: 150 | Influential: 25 | Score: 0.885")
+
+        # Verify cumulative citation tier tags
+        tags = [t["tag"] for t in item_data["tags"]]
+        self.assertIn("cites:>10", tags)
+        self.assertIn("cites:>50", tags)
+        self.assertIn("cites:>100", tags)
+        self.assertIn("type/review", tags)
+        self.assertIn("type/peer-reviewed", tags)
 
     def test_sync_to_collection_reuses_existing_items(self):
         """If a candidate already exists in Zotero, it is appended to collection without duplicating."""

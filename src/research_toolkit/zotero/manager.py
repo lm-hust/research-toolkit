@@ -128,6 +128,25 @@ class ZoteroManager:
             if c.is_review:
                 tags.append({"tag": "type/review"})
 
+            # Publication type tag
+            if c.is_preprint:
+                tags.append({"tag": "type/preprint"})
+            else:
+                tags.append({"tag": "type/peer-reviewed"})
+
+            # Cumulative citation tier tags
+            cites = c.citation_count or 0
+            if cites >= 10:
+                tags.append({"tag": "cites:>10"})
+            if cites >= 50:
+                tags.append({"tag": "cites:>50"})
+            if cites >= 100:
+                tags.append({"tag": "cites:>100"})
+
+            inf = c.influential_citation_count or 0
+            score = c.composite_score or 0.0
+            extra_text = f"Citations: {cites} | Influential: {inf} | Score: {score:.3f}"
+
             url = f"https://doi.org/{clean_doi}" if clean_doi else (c.pdf_url or "")
 
             item_data = {
@@ -139,6 +158,7 @@ class ZoteroManager:
                 "date": str(c.year) if c.year else "",
                 "DOI": clean_doi or "",
                 "url": url,
+                "extra": extra_text,
                 "tags": tags,
                 "collections": [col_key],
             }
