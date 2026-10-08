@@ -121,8 +121,12 @@ class SemanticScholarClient:
 
             authors = [a.get("name") for a in item.get("authors", []) if a.get("name")]
 
+            s2_id = item.get("paperId")
+            if s2_id:
+                ext_ids["s2_id"] = s2_id
+
             candidate = PaperCandidate(
-                paper_id=item.get("paperId", f"s2_{title[:10]}"),
+                paper_id=s2_id or f"s2_{title[:10]}",
                 title=title,
                 year=item.get("year"),
                 authors=authors,
@@ -223,6 +227,9 @@ class OpenAlexClient:
 
         source_id = source_info.get("id") or ""
         ext_ids = {"openalex_source_id": source_id} if source_id else {}
+        oa_id = item.get("id")
+        if oa_id:
+            ext_ids["openalex_id"] = oa_id
         referenced = item.get("referenced_works") or []
 
         return PaperCandidate(
