@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,12 @@ from typing import Optional
 import click
 
 from research_toolkit.discovery.curation import CurationCheckpoint
+from research_toolkit.discovery.models import (
+    AssessmentRecord,
+    PaperCandidateBatch,
+    SelectionResult,
+)
+from research_toolkit.discovery.ranker import Ranker
 from research_toolkit.discovery.service import DiscoveryService
 from research_toolkit.synthesis.adapters import get_default_gateway
 from research_toolkit.zotero.manager import ZoteroManager
@@ -252,6 +259,212 @@ def search(
     if as_json or is_piped:
         click.echo(batch.to_json(indent=2))
 
+
+def load_candidate_batch(val: str) -> PaperCandidateBatch:
+    """Loads a PaperCandidateBatch from a file path or resolves a batch ID."""
+    p = Path(val)
+    if p.is_file():
+        return PaperCandidateBatch.load(p)
+
+    search_paths = [
+        Path.cwd() / ".research" / "batches" / f"{val}.json",
+        Path.cwd() / ".research" / "batches" / val,
+    ]
+    batch_dir = os.getenv("RESEARCH_BATCH_DIR") or os.getenv("RESEARCH_DATA_DIR")
+    if batch_dir:
+        search_paths.extend([
+            Path(batch_dir) / f"{val}.json",
+            Path(batch_dir) / val,
+        ])
+    for sp in search_paths:
+        if sp.is_file():
+            return PaperCandidateBatch.load(sp)
+
+    raise click.BadParameter(f"Candidate batch file or ID '{val}' not found.")
+
+
+def load_assessment_records(val: str) -> list[AssessmentRecord]:
+    """Loads AssessmentRecords from a JSONL or JSON file, or inline text."""
+    p = Path(val)
+    if p.is_file():
+        content = p.read_text(encoding="utf-8").strip()
+    else:
+        content = val.strip()
+
+    if not content:
+        return []
+
+    # JSON array format
+    if content.startswith("[") and content.endswith("]"):
+        try:
+            arr = json.loads(content)
+            return [AssessmentRecord.from_dict(item) for item in arr]
+        except Exception:
+            pass
+
+    # JSONL format (one object per line)
+    records: list[AssessmentRecord] = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            records.append(AssessmentRecord.from_json(line))
+        except Exception as e:
+            logger.warning("Could not parse assessment record line: %s (%s)", line, e)
+    return records
+
+
+def format_selection_table(result: SelectionResult, ranker: Ranker) -> str:
+    """Formats top selected candidates and diagnostic score breakdowns into a Rich terminal table."""
+    if not result.selected_papers:
+        return "No candidates selected."
+
+    try:
+        import io
+
+        from rich.console import Console
+        from rich.table import Table
+
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=False, color_system=None, width=120)
+        table = Table(
+            title=f"Top Selected Literature Candidates (MMR Diversity Ranking, N={len(result.selected_papers)})",
+            show_header=True,
+            header_style="bold",
+        )
+        table.add_column("Rank", justify="right", style="cyan", width=5)
+        table.add_column("Type", justify="center", width=6)
+        table.add_column("Title", style="bold", min_width=30)
+        table.add_column("Author", min_width=12)
+        table.add_column("Year", justify="center", width=6)
+        table.add_column("Cites", justify="right", width=7)
+        table.add_column("Score", justify="right", width=7)
+        table.add_column("Breakdown (rel/cite/ven/rec)", min_width=25)
+        table.add_column("DOI / Identifier", min_width=20)
+
+        for idx, p in enumerate(result.selected_papers, start=1):
+            if p.is_review:
+                doc_type = "[REV]"
+            elif p.is_preprint:
+                doc_type = "[PRE]"
+            else:
+                doc_type = "[RES]"
+
+            first_author = p.authors[0] if p.authors else "-"
+            if len(first_author) > 15:
+                first_author = first_author[:13] + ".."
+
+            score = result.scores.get(p.paper_id, p.composite_score)
+            bd = ranker.score_breakdown(p)
+            bd_str = f"r:{bd['s_rel']:.2f} c:{bd['s_cite']:.2f} v:{bd['s_venue']:.2f} y:{bd['s_recency']:.2f}"
+            title_disp = (p.title[:45] + "...") if len(p.title) > 48 else p.title
+            doi_disp = p.doi or p.arxiv_id or p.paper_id
+
+            table.add_row(
+                str(idx),
+                doc_type,
+                title_disp,
+                first_author,
+                str(p.year or "-"),
+                str(p.citation_count),
+                f"{score:.3f}",
+                bd_str,
+                doi_disp,
+            )
+
+        console.print(table)
+        return buf.getvalue()
+    except ImportError:
+        return f"Selected {len(result.selected_papers)} papers."
+
+
+@cli.command("rank")
+@click.option(
+    "--batch",
+    "-b",
+    default=None,
+    help="Candidate batch ID or file path to evaluate.",
+)
+@click.option(
+    "--assessments",
+    "-a",
+    default=None,
+    help="Path to structured AssessmentRecords JSONL or JSON file.",
+)
+@click.option(
+    "--topic",
+    "-t",
+    default=None,
+    help="Topic identifier or query text (defaults to batch topic).",
+)
+@click.option(
+    "--top-n",
+    "-n",
+    default=10,
+    type=int,
+    help="Number of top candidates to select (default: 10).",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress Rich table and progress diagnostics on stderr.",
+)
+def rank(
+    batch: Optional[str],
+    assessments: Optional[str],
+    topic: Optional[str],
+    top_n: int,
+    quiet: bool,
+) -> None:
+    """Ranks candidate papers with composite scoring and MMR diversity selection."""
+    batch_obj: Optional[PaperCandidateBatch] = None
+    if batch:
+        batch_obj = load_candidate_batch(batch)
+    else:
+        stdin_stream = sys.stdin
+        if not stdin_stream.isatty():
+            stdin_data = stdin_stream.read().strip()
+            if stdin_data:
+                batch_obj = PaperCandidateBatch.from_json(stdin_data)
+        if batch_obj is None:
+            session = load_session()
+            active_file = session.get("active_batch_file")
+            if active_file and Path(active_file).is_file():
+                batch_obj = PaperCandidateBatch.load(active_file)
+            else:
+                raise click.UsageError(
+                    "Candidate batch must be provided via stdin JSON stream or --batch <path_or_id>."
+                )
+
+    assessment_records = (
+        load_assessment_records(assessments) if assessments else None
+    )
+    effective_topic = topic or batch_obj.topic or batch_obj.query
+
+    ranker = Ranker()
+    result = ranker.select(
+        candidates=batch_obj.papers,
+        requested_n=top_n,
+        assessments=assessment_records,
+        batch_id=batch_obj.batch_id,
+        topic=effective_topic,
+    )
+
+    if not quiet:
+        if result.selected_papers:
+            table_disp = format_selection_table(result, ranker)
+            click.echo(table_disp, err=True)
+            click.echo(
+                f"Selected {len(result.selected_papers)}/{top_n} candidates (strategy: {result.strategy}, status: {result.status})",
+                err=True,
+            )
+        else:
+            click.echo("No eligible candidates found.", err=True)
+
+    click.echo(result.to_json(indent=2))
 
 
 @cli.command("expand")

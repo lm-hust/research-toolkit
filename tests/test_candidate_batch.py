@@ -9,8 +9,10 @@ import unittest
 from pathlib import Path
 
 from research_toolkit.discovery.models import (
+    AssessmentRecord,
     PaperCandidate,
     PaperCandidateBatch,
+    SelectionResult,
     clean_doi,
     compute_paper_id,
 )
@@ -160,6 +162,111 @@ class TestCandidateBatchContracts(unittest.TestCase):
             loaded = PaperCandidateBatch.load(saved_path)
             self.assertEqual(loaded.batch_id, "batch_atomic_123")
             self.assertEqual(loaded.papers[0].paper_id, "doi:10.1000/p1")
+
+    def test_assessment_record_schema_and_serialization(self):
+        """AssessmentRecord validates structured decisions, scores, and serializes cleanly."""
+        rec = AssessmentRecord(
+            paper_id="doi:10.1000/gnn_survey",
+            batch_id="batch_123",
+            decision="related",
+            relevance_score=0.95,
+            reason="Core review of graph learning foundations",
+            evidence="Section 2 describes message passing formally",
+            assessor="lit-scout",
+            version=1,
+        )
+        self.assertEqual(rec.decision, "related")
+        self.assertEqual(rec.relevance_score, 0.95)
+        self.assertTrue(rec.created_at)
+
+        # Dictionary serialization
+        d = rec.to_dict()
+        self.assertEqual(d["paper_id"], "doi:10.1000/gnn_survey")
+        self.assertEqual(d["decision"], "related")
+        self.assertEqual(d["relevance_score"], 0.95)
+        self.assertEqual(d["assessor"], "lit-scout")
+        self.assertEqual(d["version"], 1)
+
+        # Deserialization
+        restored = AssessmentRecord.from_dict(d)
+        self.assertEqual(restored.paper_id, rec.paper_id)
+        self.assertEqual(restored.relevance_score, 0.95)
+        self.assertEqual(restored.evidence, rec.evidence)
+
+        # JSON round-trip
+        json_str = rec.to_json()
+        from_json_rec = AssessmentRecord.from_json(json_str)
+        self.assertEqual(from_json_rec.paper_id, rec.paper_id)
+        self.assertEqual(from_json_rec.decision, "related")
+
+    def test_assessment_record_decision_invariants(self):
+        """Unrelated decision enforces score 0.0, pending retains None."""
+        # Unrelated enforces 0.0
+        rec_unrelated = AssessmentRecord(
+            paper_id="doi:10.1000/irrelevant",
+            decision="unrelated",
+            relevance_score=0.8,  # Should be overridden to 0.0
+        )
+        self.assertEqual(rec_unrelated.relevance_score, 0.0)
+
+        rec_unrelated_none = AssessmentRecord(
+            paper_id="doi:10.1000/irrelevant2",
+            decision="unrelated",
+            relevance_score=None,
+        )
+        self.assertEqual(rec_unrelated_none.relevance_score, 0.0)
+
+        # Pending retains None
+        rec_pending = AssessmentRecord(
+            paper_id="doi:10.1000/pending",
+            decision="pending",
+            relevance_score=0.5,  # Should be overridden to None
+        )
+        self.assertIsNone(rec_pending.relevance_score)
+
+    def test_selection_result_schema_and_serialization(self):
+        """SelectionResult manages selected papers, scores, reasons, and roundtrips via JSON."""
+        p1 = PaperCandidate(paper_id="doi:10.1000/p1", title="Paper One", citation_count=50)
+        p2 = PaperCandidate(paper_id="doi:10.1000/p2", title="Paper Two", citation_count=20)
+
+        sel = SelectionResult(
+            batch_id="batch_001",
+            strategy="composite_mmr",
+            requested_n=5,
+            selected_papers=[p1, p2],
+            scores={"doi:10.1000/p1": 0.85, "doi:10.1000/p2": 0.72},
+            reasons={
+                "doi:10.1000/p1": "High relevance and citation velocity",
+                "doi:10.1000/p2": "Complementary coverage",
+            },
+            status="completed",
+        )
+        # selected_paper_ids should be auto-populated
+        self.assertEqual(sel.selected_paper_ids, ["doi:10.1000/p1", "doi:10.1000/p2"])
+        self.assertEqual(len(sel), 2)
+        self.assertTrue(sel.created_at)
+
+        # Dict serialization
+        d = sel.to_dict()
+        self.assertEqual(d["batch_id"], "batch_001")
+        self.assertEqual(d["strategy"], "composite_mmr")
+        self.assertEqual(d["requested_n"], 5)
+        self.assertEqual(len(d["selected_papers"]), 2)
+        self.assertEqual(d["scores"]["doi:10.1000/p1"], 0.85)
+
+        # Deserialization from dict
+        restored = SelectionResult.from_dict(d)
+        self.assertEqual(restored.batch_id, "batch_001")
+        self.assertEqual(len(restored.selected_papers), 2)
+        self.assertEqual(restored.selected_papers[0].paper_id, "doi:10.1000/p1")
+        self.assertEqual(restored.selected_paper_ids, ["doi:10.1000/p1", "doi:10.1000/p2"])
+
+        # JSON round-trip
+        json_str = sel.to_json(indent=2)
+        from_json_sel = SelectionResult.from_json(json_str)
+        self.assertEqual(from_json_sel.batch_id, "batch_001")
+        self.assertEqual(from_json_sel.scores, sel.scores)
+        self.assertEqual(from_json_sel.reasons, sel.reasons)
 
 
 if __name__ == "__main__":
