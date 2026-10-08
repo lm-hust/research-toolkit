@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +23,7 @@ from research_toolkit.discovery.models import (
     SelectionResult,
     SnowballResult,
 )
+from research_toolkit.discovery.query import QueryTranslator
 from research_toolkit.discovery.ranker import Ranker
 from research_toolkit.discovery.service import DiscoveryService
 from research_toolkit.discovery.snowballer import (
@@ -107,6 +109,268 @@ def parse_year_range(year_str: Optional[str]) -> Optional[tuple[int, int]]:
     except ValueError:
         logger.warning("Invalid year filter format: '%s'. Expected YYYY, YYYY-YYYY, or YYYY+.", year_str)
         return None
+
+
+def _execute_scout_pipeline(
+    topic_query: str,
+    collection: Optional[str],
+    top_n: int,
+    direction: str,
+    dry_run: bool,
+    as_json: bool,
+    quiet: bool,
+    detail: bool,
+    interactive: Optional[bool] = None,
+    min_cites: int = 0,
+    year: Optional[str] = None,
+    peer_reviewed: bool = False,
+    sort: str = "composite",
+) -> None:
+    """Executes the full literature discovery pipeline: Search -> Rank -> Snowball -> Re-rank -> Curation -> Export."""
+    y_range = parse_year_range(year)
+    effective_topic = topic_query
+    col_name = collection or QueryTranslator.to_collection_name(topic_query)
+
+    if not quiet:
+        click.echo(f"🔭 Starting scout pipeline for topic: '{topic_query}'...", err=True)
+        click.echo(f"   Target collection: '{col_name}'", err=True)
+
+    # 1. Literature Search Atom
+    service = DiscoveryService()
+    search_batch = service.search(
+        query=topic_query,
+        limit=max(top_n * 2, 10),
+        min_cites=min_cites,
+        year_range=y_range,
+        peer_reviewed_only=peer_reviewed,
+    )
+    search_candidates = search_batch.papers
+
+    if not search_candidates:
+        if not quiet:
+            click.echo("No matching papers found in initial search.", err=True)
+        if as_json or not sys.stdout.isatty():
+            click.echo(json.dumps({
+                "collection_key": None,
+                "collection_name": col_name,
+                "selected_count": 0,
+                "created_count": 0,
+                "reused_count": 0,
+                "selected_papers": [],
+                "status": "no_results",
+            }, indent=2))
+        return
+
+    # 2. Initial Ranking & Selection for Snowball Seeds
+    ranker = Ranker()
+    initial_sel = ranker.select(
+        candidates=search_candidates,
+        requested_n=min(len(search_candidates), max(5, top_n)),
+        topic=effective_topic,
+    )
+    seeds = initial_sel.selected_papers if initial_sel.selected_papers else search_candidates[:5]
+
+    # 3. 1-Hop Citation Snowballing
+    if not quiet:
+        click.echo(
+            f"🌱 Snowballing from {len(seeds)} seed papers (direction: {direction})...",
+            err=True,
+        )
+    snowballer = CitationSnowballer()
+    snowball_res = snowballer.snowball(
+        seeds=seeds,
+        direction=direction,
+        max_backward=20,
+        max_forward=20,
+    )
+
+    # 4. Re-Ranking & Stratified MMR Diversity Selection
+    all_pool = list(seeds) + list(snowball_res.discovered_candidates)
+    final_sel = ranker.select(
+        candidates=all_pool,
+        requested_n=top_n,
+        topic=effective_topic,
+    )
+    ranked_candidates = final_sel.selected_papers if final_sel.selected_papers else all_pool[:top_n]
+
+    # 5. Interactive CurationCheckpoint
+    is_interactive = (
+        interactive
+        if interactive is not None
+        else (sys.stdin.isatty() and not as_json and not quiet and not dry_run)
+    )
+    checkpoint = CurationCheckpoint(stream=sys.stderr)
+    curated = checkpoint.review(ranked_candidates, auto_confirm=not is_interactive)
+    if not curated:
+        if not quiet:
+            click.echo("Curation aborted. No papers selected.", err=True)
+        return
+
+    # 6. Export to Zotero
+    if not quiet:
+        click.echo(f"📦 Exporting {len(curated)} papers to Zotero collection '{col_name}'...", err=True)
+
+    zotero_mgr = ZoteroManager()
+    col_obj, sync_res = zotero_mgr.sync_to_collection(
+        col_name,
+        curated,
+        auto_download_oa=not dry_run,
+        dry_run=dry_run,
+    )
+
+    session = load_session()
+    if not dry_run:
+        session["active_collection"] = col_obj.name
+        session["active_collection_key"] = col_obj.key
+        save_session(session)
+
+    if not quiet:
+        table_disp = format_export_table(col_obj.name, col_obj.key, curated, sync_res)
+        click.echo(table_disp, err=True)
+        if dry_run:
+            click.echo(
+                f"[dry-run] Preview: {sync_res.created_count} new, {sync_res.reused_count} existing. No changes committed.",
+                err=True,
+            )
+        else:
+            click.echo(
+                f"✨ Successfully exported {sync_res.total_count} papers to '{col_obj.name}' (Key: {col_obj.key}).",
+                err=True,
+            )
+        if col_obj.web_url:
+            click.echo(f"🔗 Collection URL: {col_obj.web_url}", err=True)
+
+    # Formulate output summary
+    summary_data = {
+        "collection_key": col_obj.key,
+        "collection_name": col_obj.name,
+        "collection_url": col_obj.web_url,
+        "selected_count": len(curated),
+        "created_count": sync_res.created_count,
+        "reused_count": sync_res.reused_count,
+        "total_count": sync_res.total_count,
+        "dry_run": dry_run,
+        "status": "completed",
+    }
+    if detail:
+        summary_data["candidates"] = [c.to_dict() for c in curated]
+
+    if as_json or not sys.stdout.isatty():
+        click.echo(json.dumps(summary_data, indent=2))
+
+
+@cli.command("scout")
+@click.argument("topic", required=False)
+@click.option(
+    "--topic",
+    "-t",
+    "topic_opt",
+    default=None,
+    help="Topic keyword or query expression.",
+)
+@click.option(
+    "--collection",
+    "-c",
+    default=None,
+    help="Target Zotero collection name or key.",
+)
+@click.option(
+    "--top-n",
+    "-n",
+    default=10,
+    type=int,
+    help="Target number of papers (default: 10).",
+)
+@click.option(
+    "--direction",
+    type=click.Choice(["forward", "backward", "both"], case_sensitive=False),
+    default="both",
+    help="Snowballing direction (forward, backward, both, default both).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview candidate discovery and selection without mutating Zotero.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emits JSON selection and export summary to stdout.",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppresses intermediate tables and progress on stderr.",
+)
+@click.option(
+    "--detail",
+    "-d",
+    is_flag=True,
+    default=False,
+    help="Includes extended candidate previews in output.",
+)
+@click.option(
+    "--interactive/--non-interactive",
+    default=None,
+    help="Interactive CurationCheckpoint multi-selection (default: auto).",
+)
+@click.option(
+    "--min-cites",
+    default=0,
+    type=int,
+    help="Minimum citation count threshold.",
+)
+@click.option(
+    "--year",
+    "-y",
+    default=None,
+    help="Publication year filter (e.g., 2020-2025, 2023+, or 2024).",
+)
+@click.option(
+    "--peer-reviewed",
+    is_flag=True,
+    default=False,
+    help="Filter out unreviewed preprints (e.g. arXiv).",
+)
+def scout(
+    topic: Optional[str],
+    topic_opt: Optional[str],
+    collection: Optional[str],
+    top_n: int,
+    direction: str,
+    dry_run: bool,
+    as_json: bool,
+    quiet: bool,
+    detail: bool,
+    interactive: Optional[bool],
+    min_cites: int,
+    year: Optional[str],
+    peer_reviewed: bool,
+) -> None:
+    """End-to-end literature discovery pipeline: Search -> Rank -> Snowball -> Re-rank -> Curation -> Export."""
+    effective_topic = topic_opt or topic
+    if not effective_topic:
+        raise click.UsageError("Topic must be provided either as argument or via --topic.")
+
+    _execute_scout_pipeline(
+        topic_query=effective_topic,
+        collection=collection,
+        top_n=top_n,
+        direction=direction,
+        dry_run=dry_run,
+        as_json=as_json,
+        quiet=quiet,
+        detail=detail,
+        interactive=interactive,
+        min_cites=min_cites,
+        year=year,
+        peer_reviewed=peer_reviewed,
+    )
 
 
 @cli.command()
@@ -203,6 +467,12 @@ def parse_year_range(year_str: Optional[str]) -> Optional[tuple[int, int]]:
     default="composite",
     help="Ranking order (composite, citations, recent).",
 )
+@click.option(
+    "--auto-sync",
+    is_flag=True,
+    default=False,
+    help="Legacy option: Automatic sync to Zotero.",
+)
 def search(
     query: str,
     limit: int,
@@ -220,8 +490,35 @@ def search(
     detail: bool,
     dry_run: bool,
     sort: str,
+    auto_sync: bool,
 ) -> None:
     """Pure literature retrieval atom across Semantic Scholar and OpenAlex."""
+    # Check for legacy options requiring compatibility shim to scout
+    is_legacy_mode = bool(collection or auto_sync or snowball)
+    if is_legacy_mode:
+        warn_msg = (
+            "DeprecationWarning: Invoking 'search' with legacy workflow options (--collection, "
+            "--snowball, --auto-sync) is deprecated. Use 'research-toolkit scout' instead."
+        )
+        warnings.warn(warn_msg, DeprecationWarning, stacklevel=2)
+        click.echo(f"⚠️  {warn_msg}", err=True)
+
+        _execute_scout_pipeline(
+            topic_query=query,
+            collection=collection,
+            top_n=limit,
+            direction="both",
+            dry_run=dry_run,
+            as_json=as_json,
+            quiet=quiet,
+            detail=detail,
+            min_cites=min_cites,
+            year=year,
+            peer_reviewed=peer_reviewed,
+            sort=sort,
+        )
+        return
+
     if not quiet:
         click.echo(f"Searching literature for: '{query}'...", err=True)
 
