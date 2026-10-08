@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from research_toolkit.discovery.clients import OpenAlexClient, SemanticScholarClient
 from research_toolkit.discovery.dedup import Deduplicator
-from research_toolkit.discovery.models import PaperCandidate
+from research_toolkit.discovery.models import PaperCandidate, PaperCandidateBatch, generate_batch_id
 from research_toolkit.discovery.ranker import Ranker
 from research_toolkit.discovery.snowballer import CitationSnowballer
 
@@ -34,6 +34,127 @@ class DiscoveryService:
         self.deduplicator = deduplicator or Deduplicator()
         self.ranker = ranker or Ranker()
         self.snowballer = snowballer or CitationSnowballer(oa_client=self.oa_client)
+
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        min_cites: int = 0,
+        year_range: Optional[Tuple[int, int]] = None,
+        peer_reviewed_only: bool = False,
+        batch_id: Optional[str] = None,
+    ) -> PaperCandidateBatch:
+        """
+        Pure literature retrieval atom across Semantic Scholar and OpenAlex.
+        Performs multi-source querying, auto-relax retries, normalization, and deduplication.
+        Does NOT perform snowballing or Zotero writes.
+        Returns an immutable PaperCandidateBatch.
+        """
+        query_limit = max(10, limit)
+        source_observations: dict[str, Any] = {
+            "semantic_scholar": {},
+            "openalex": {},
+        }
+
+        s2_candidates: List[PaperCandidate] = []
+        s2_failed = False
+        try:
+            s2_candidates = self.s2_client.search(query, limit=query_limit)
+            source_observations["semantic_scholar"] = {
+                "status": "success",
+                "count": len(s2_candidates),
+            }
+        except Exception as e:
+            logger.warning("Semantic Scholar retrieval failed: %s", e)
+            s2_failed = True
+            source_observations["semantic_scholar"] = {
+                "status": "error",
+                "error": str(e),
+                "count": 0,
+            }
+
+        oa_candidates: List[PaperCandidate] = []
+        oa_failed = False
+        try:
+            oa_candidates = self.oa_client.search(query, limit=query_limit)
+            source_observations["openalex"] = {
+                "status": "success",
+                "count": len(oa_candidates),
+            }
+        except Exception as e:
+            logger.warning("OpenAlex retrieval failed: %s", e)
+            oa_failed = True
+            source_observations["openalex"] = {
+                "status": "error",
+                "error": str(e),
+                "count": 0,
+            }
+
+        combined = list(s2_candidates) + list(oa_candidates)
+
+        # Auto-relax retry if complex query yielded 0 results and no fatal errors
+        if not combined and not (s2_failed and oa_failed):
+            if '"' in query or any(kw in query for kw in ("AND", "OR", "(", ")")):
+                relaxed = re.sub(r'["\'()]', " ", query)
+                relaxed = re.sub(r"\b(AND|OR|NOT)\b", " ", relaxed, flags=re.IGNORECASE)
+                relaxed_topic = " ".join(relaxed.split())
+                if relaxed_topic and relaxed_topic != query:
+                    logger.info("Zero initial results; auto-relaxing query to: %s", relaxed_topic)
+                    if not s2_failed:
+                        try:
+                            s2_retry = self.s2_client.search(relaxed_topic, limit=query_limit)
+                            s2_candidates = s2_retry
+                            source_observations["semantic_scholar"]["count"] = len(s2_retry)
+                            source_observations["semantic_scholar"]["relaxed_query"] = relaxed_topic
+                        except Exception:
+                            pass
+                    if not oa_failed:
+                        try:
+                            oa_retry = self.oa_client.search(relaxed_topic, limit=query_limit)
+                            oa_candidates = oa_retry
+                            source_observations["openalex"]["count"] = len(oa_retry)
+                            source_observations["openalex"]["relaxed_query"] = relaxed_topic
+                        except Exception:
+                            pass
+                    combined = list(s2_candidates) + list(oa_candidates)
+
+        deduped = self.deduplicator.process(combined) if combined else []
+
+        # Filtering
+        filtered: List[PaperCandidate] = []
+        for c in deduped:
+            if min_cites > 0 and c.citation_count < min_cites:
+                continue
+            if year_range:
+                min_y, max_y = year_range
+                if c.year is not None and not (min_y <= c.year <= max_y):
+                    continue
+            if peer_reviewed_only and c.is_preprint:
+                continue
+            filtered.append(c)
+
+        # Truncate by limit if requested
+        was_truncated = len(filtered) > limit
+        selected_candidates = filtered[:limit] if limit > 0 else filtered
+
+        # Determine batch status
+        if s2_failed and oa_failed:
+            status = "partial_failure"
+        elif s2_failed or oa_failed:
+            status = "partial_failure"
+        elif was_truncated:
+            status = "budget_truncated"
+        else:
+            status = "completed"
+
+        return PaperCandidateBatch(
+            batch_id=batch_id or generate_batch_id(),
+            query=query,
+            papers=selected_candidates,
+            source_observations=source_observations,
+            status=status,
+        )
+
 
     def search_and_rank(
         self,

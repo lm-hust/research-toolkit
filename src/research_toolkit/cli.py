@@ -14,7 +14,6 @@ from typing import Optional
 import click
 
 from research_toolkit.discovery.curation import CurationCheckpoint
-from research_toolkit.discovery.query import QueryTranslator
 from research_toolkit.discovery.service import DiscoveryService
 from research_toolkit.synthesis.adapters import get_default_gateway
 from research_toolkit.zotero.manager import ZoteroManager
@@ -98,46 +97,23 @@ def parse_year_range(year_str: Optional[str]) -> Optional[tuple[int, int]]:
 @cli.command()
 @click.argument("query")
 @click.option(
-    "--topic",
-    "-t",
-    "-c",
-    "--collection",
-    default=None,
-    help="Name of target Zotero collection (default: auto slugified from query).",
-)
-@click.option(
     "--limit",
     "-k",
-    default=8,
+    default=10,
     type=int,
-    help="Number of top papers to discover and rank (default: 8).",
+    help="Number of candidate papers to discover (default: 10).",
 )
 @click.option(
-    "--detail",
-    "-d",
-    is_flag=True,
-    default=False,
-    help="Display detailed table of retrieved paper candidates (default: True).",
+    "--topic",
+    "-t",
+    default=None,
+    help="Optional topic identifier or query refinement.",
 )
 @click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    default=False,
-    help="Output collection info and results as structured JSON.",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    default=False,
-    help="Perform discovery and ranking dry-run without writing to Zotero.",
-)
-@click.option(
-    "--sort",
-    "-s",
-    type=click.Choice(["composite", "citations", "recent", "topological"], case_sensitive=False),
-    default="composite",
-    help="Ranking order: composite (balanced), citations (most cited), recent (newest), topological (most co-cited).",
+    "--collection",
+    "-c",
+    default=None,
+    help="Legacy option: Target collection (deprecated in search atom).",
 )
 @click.option(
     "--min-cites",
@@ -158,169 +134,124 @@ def parse_year_range(year_str: Optional[str]) -> Optional[tuple[int, int]]:
     help="Filter out unreviewed preprints (e.g. arXiv).",
 )
 @click.option(
-    "--snowball/--no-snowball",
-    default=True,
-    help="Enable 1-hop bidirectional citation snowballing (default: True).",
-)
-@click.option(
-    "--interactive/--non-interactive",
-    "-i/-I",
-    "interactive",
-    default=None,
-    help="Interactive CurationCheckpoint multi-selection (default: auto).",
-)
-@click.option(
-    "--yes",
+    "--json",
+    "as_json",
     is_flag=True,
     default=False,
-    help="Accept all candidates without prompting (alias for --non-interactive).",
+    help="Output machine-readable PaperCandidateBatch JSON to stdout.",
 )
 @click.option(
     "--quiet",
     "-q",
     is_flag=True,
     default=False,
-    help="Suppress table output in terminal.",
+    help="Suppress table and progress output to stderr.",
+)
+@click.option(
+    "--data-dir",
+    default=None,
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Directory to persist candidate batches (default: ./.research/batches).",
+)
+@click.option(
+    "--batch-dir",
+    default=None,
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Directory to persist candidate batches.",
+)
+@click.option(
+    "--batch-id",
+    default=None,
+    help="Explicit ID to assign to the candidate batch.",
+)
+@click.option(
+    "--snowball/--no-snowball",
+    default=False,
+    help="Legacy option: Snowballing is decoupled from the search atom.",
+)
+@click.option(
+    "--detail",
+    "-d",
+    is_flag=True,
+    default=False,
+    help="Legacy option.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Legacy option: search atom is read-only retrieval by default.",
+)
+@click.option(
+    "--sort",
+    "-s",
+    default="composite",
+    help="Ranking order (composite, citations, recent).",
 )
 def search(
     query: str,
-    topic: Optional[str],
     limit: int,
-    detail: bool,
-    as_json: bool,
-    dry_run: bool,
-    sort: str,
+    topic: Optional[str],
+    collection: Optional[str],
     min_cites: int,
     year: Optional[str],
     peer_reviewed: bool,
-    snowball: bool,
-    interactive: Optional[bool],
-    yes: bool,
+    as_json: bool,
     quiet: bool,
+    data_dir: Optional[Path],
+    batch_dir: Optional[Path],
+    batch_id: Optional[str],
+    snowball: bool,
+    detail: bool,
+    dry_run: bool,
+    sort: str,
 ) -> None:
-    """Search literature and rank candidates across Semantic Scholar and OpenAlex."""
-    if not as_json and not quiet:
-        click.echo(f"Searching literature for: '{query}'...")
+    """Pure literature retrieval atom across Semantic Scholar and OpenAlex."""
+    if not quiet:
+        click.echo(f"Searching literature for: '{query}'...", err=True)
 
     y_range = parse_year_range(year)
+    effective_topic = topic or query
     service = DiscoveryService()
-    candidates = service.search_and_rank(
-        query,
-        top_k=limit,
-        sort_by=sort,
+    batch = service.search(
+        query=query,
+        limit=limit,
         min_cites=min_cites,
         year_range=y_range,
         peer_reviewed_only=peer_reviewed,
-        snowball=snowball,
+        batch_id=batch_id,
     )
 
-    if not candidates:
-        if as_json:
-            click.echo(json.dumps({"status": "no_results", "query": query, "count": 0}))
-        else:
-            click.echo("No matching papers found.")
-        return
+    # Persist batch file atomically
+    target_dir = batch_dir or data_dir
+    saved_path = batch.save(directory=target_dir)
 
-    # Derive canonical ZoteroCollection name
-    col_name = QueryTranslator.to_collection_name(query, topic)
-
-    # Interactive CurationCheckpoint
-    is_interactive = (
-        False
-        if (yes or interactive is False)
-        else (
-            True
-            if interactive is True
-            else (sys.stdin.isatty() and not dry_run and not as_json and not quiet)
-        )
+    # Persist session state
+    save_session(
+        {
+            "active_batch": batch.batch_id,
+            "active_batch_file": str(saved_path),
+            "topic": effective_topic,
+        }
     )
-    if not as_json and not quiet:
-        if is_interactive:
-            checkpoint = CurationCheckpoint()
-            candidates = checkpoint.review(candidates, interactive=True)
-            if not candidates:
-                click.echo("CurationCheckpoint aborted. No papers were committed.")
-                return
-        else:
-            table_output = service.format_table(candidates)
-            click.echo(table_output)
 
-    if dry_run:
-        if as_json:
-            payload = {
-                "dry_run": True,
-                "collection_name": col_name,
-                "query": query,
-                "count": len(candidates),
-            }
-            if detail:
-                payload["candidates"] = [
-                    {
-                        "paper_id": c.paper_id,
-                        "title": c.title,
-                        "year": c.year,
-                        "venue": c.venue,
-                        "doi": c.doi,
-                        "composite_score": c.composite_score,
-                    }
-                    for c in candidates
-                ]
-            click.echo(json.dumps(payload, indent=2))
-        else:
+    # Route Rich table and progress info to stderr
+    if not quiet:
+        if batch.papers:
+            table_output = service.format_table(batch.papers)
+            click.echo(table_output, err=True)
             click.echo(
-                f"\n[dry-run] Discovered and ranked {len(candidates)} papers. No changes committed."
-            )
-        return
-
-    # Mandatory Zotero insertion
-    try:
-        zotero_mgr = ZoteroManager()
-        collection, created = zotero_mgr.sync_to_collection(col_name, candidates)
-    except ValueError as e:
-        if as_json:
-            click.echo(
-                json.dumps({"status": "error", "error_type": "auth_missing", "message": str(e)}),
+                f"Persisted batch '{batch.batch_id}' ({len(batch.papers)} papers) to {saved_path}",
                 err=True,
             )
         else:
-            click.echo(f"\n⚠️  Zotero 配置错误: {e}", err=True)
-            click.echo("💡 提示: 若需本地预览文献检索与排序，可使用 `--dry-run`；若需入库，请在 .env 中配置 ZOTERO_USER_ID 与 ZOTERO_API_KEY。", err=True)
-        sys.exit(1)
+            click.echo("No matching papers found.", err=True)
 
-    save_session(
-        {
-            "active_collection": col_name,
-            "topic": query,
-            "collection_key": collection.key,
-            "collection_url": collection.web_url,
-        }
-    )
+    # Route pure JSON to stdout when piped (non-tty) or when --json is specified
+    is_piped = not sys.stdout.isatty()
+    if as_json or is_piped:
+        click.echo(batch.to_json(indent=2))
 
-    if as_json:
-        payload = {
-            "collection_id": collection.key,
-            "collection_url": collection.web_url,
-            "collection_name": col_name,
-            "count": len(created),
-            "created_count": getattr(created, "created_count", len(created)),
-            "reused_count": getattr(created, "reused_count", 0),
-        }
-        if detail:
-            payload["candidates"] = [
-                {
-                    "paper_id": c.paper_id,
-                    "title": c.title,
-                    "year": c.year,
-                    "venue": c.venue,
-                    "doi": c.doi,
-                    "composite_score": c.composite_score,
-                }
-                for c in candidates
-            ]
-        click.echo(json.dumps(payload, indent=2))
-    else:
-        click.echo(f"ID: {collection.key}")
-        click.echo(f"URL: {collection.web_url}")
 
 
 @cli.command("expand")
