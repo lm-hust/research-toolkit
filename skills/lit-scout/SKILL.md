@@ -111,6 +111,19 @@ uv run python -m research_toolkit.cli search "<Tier 1 Query>" -k 20 | uv run pyt
 uv run python -m research_toolkit.cli rank --batch <batch_id_or_path> -n 10 [--assessments <assessments.jsonl>] [--topic <slug>]
 ```
 
+#### Pathway D: Atomic Citation Snowballing (`snowball`)
+When expanding 1-hop bidirectional citation networks from multi-source seeds (piped `SelectionResult` or `PaperCandidateBatch`, batch files, explicit DOIs/IDs, or Zotero collections):
+```bash
+# Pipe chaining: Search -> Snowball -> MMR Rank
+uv run python -m research_toolkit.cli search "<Tier 1 Query>" -k 10 | uv run python -m research_toolkit.cli snowball --direction both --max-backward 20 --max-forward 20 | uv run python -m research_toolkit.cli rank -n 10
+
+# Snowball from explicit seed DOIs or platform IDs
+uv run python -m research_toolkit.cli snowball --seeds "10.1000/182,10.1000/183" --direction forward --max-forward 15
+
+# Snowball from an existing Zotero collection
+uv run python -m research_toolkit.cli snowball --from-collection "<collection-name>" --direction both
+```
+
 ### Step 4: Presentation & Execution Modes
 
 #### Mode A: Interactive Preview (Default HITL)

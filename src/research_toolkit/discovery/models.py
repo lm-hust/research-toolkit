@@ -283,7 +283,13 @@ class PaperCandidateBatch:
     def from_dict(cls, data: Dict[str, Any]) -> PaperCandidateBatch:
         """Deserializes batch from dictionary."""
         query = data.get("query") or data.get("topic") or ""
-        raw_papers = data.get("papers") or []
+        raw_papers = (
+            data.get("papers")
+            or data.get("discovered_candidates")
+            or data.get("all_candidates")
+            or data.get("selected_papers")
+            or []
+        )
         papers = [
             p if isinstance(p, PaperCandidate) else PaperCandidate.from_dict(p)
             for p in raw_papers
@@ -477,4 +483,146 @@ class SelectionResult:
     def from_json(cls, json_str: str) -> SelectionResult:
         """Deserializes SelectionResult from JSON string."""
         return cls.from_dict(json.loads(json_str))
+
+
+@dataclass
+class CitationEdge:
+    """
+    Directed citation relationship edge between papers in a snowball expansion graph.
+    direction is 'cites' or 'referenced_by'.
+    """
+
+    source_id: str
+    target_id: str
+    direction: str  # "cites" | "referenced_by"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes CitationEdge to standard dictionary representation."""
+        return {
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "direction": self.direction,
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        """Serializes CitationEdge to JSON string."""
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> CitationEdge:
+        """Deserializes CitationEdge from dictionary."""
+        return cls(
+            source_id=data.get("source_id", ""),
+            target_id=data.get("target_id", ""),
+            direction=data.get("direction", "cites"),
+        )
+
+    @classmethod
+    def from_json(cls, json_str: str) -> CitationEdge:
+        """Deserializes CitationEdge from JSON string."""
+        return cls.from_dict(json.loads(json_str))
+
+
+@dataclass
+class SnowballResult:
+    """
+    Structured outcome of bidirectional 1-hop citation graph expansion.
+    Conforms to Ticket #43 data contract, cleanly partitioning seeds from
+    newly discovered candidates.
+    """
+
+    seed_paper_ids: List[str] = field(default_factory=list)
+    seeds: List[PaperCandidate] = field(default_factory=list)
+    discovered_candidates: List[PaperCandidate] = field(default_factory=list)
+    citation_edges: List[CitationEdge] = field(default_factory=list)
+    direction: str = "both"  # "both" | "forward" | "backward"
+    status: str = "completed"  # "completed" | "partial_failure" | "budget_truncated"
+    created_at: str = ""
+    co_citation_matrix: Dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.created_at:
+            self.created_at = datetime.now(timezone.utc).isoformat()
+        if self.seeds and not self.seed_paper_ids:
+            self.seed_paper_ids = [s.paper_id for s in self.seeds]
+
+    @property
+    def all_candidates(self) -> List[PaperCandidate]:
+        """All candidates including seeds and newly discovered candidates."""
+        return self.seeds + self.discovered_candidates
+
+    @property
+    def foundational(self) -> List[PaperCandidate]:
+        """Backward-discovered foundational candidates."""
+        return [c for c in self.discovered_candidates if c.topological_role == "foundational"]
+
+    @property
+    def recent_advancements(self) -> List[PaperCandidate]:
+        """Forward-discovered recent advancement candidates."""
+        return [c for c in self.discovered_candidates if c.topological_role == "recent_advancement"]
+
+    def __len__(self) -> int:
+        return len(self.discovered_candidates)
+
+    def __iter__(self):
+        return iter(self.discovered_candidates)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes SnowballResult to dictionary."""
+        return {
+            "seed_paper_ids": list(self.seed_paper_ids),
+            "seeds": [s.to_dict() for s in self.seeds],
+            "discovered_candidates": [c.to_dict() for c in self.discovered_candidates],
+            "citation_edges": [e.to_dict() for e in self.citation_edges],
+            "direction": self.direction,
+            "status": self.status,
+            "created_at": self.created_at,
+            "co_citation_matrix": dict(self.co_citation_matrix),
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        """Serializes SnowballResult to JSON string."""
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> SnowballResult:
+        """Deserializes SnowballResult from dictionary."""
+        raw_seeds = data.get("seeds") or []
+        seeds = [
+            s if isinstance(s, PaperCandidate) else PaperCandidate.from_dict(s)
+            for s in raw_seeds
+        ]
+        raw_cands = data.get("discovered_candidates") or []
+        if not raw_cands:
+            raw_f = data.get("foundational") or []
+            raw_r = data.get("recent_advancements") or []
+            raw_cands = raw_f + raw_r
+        discovered_candidates = [
+            c if isinstance(c, PaperCandidate) else PaperCandidate.from_dict(c)
+            for c in raw_cands
+        ]
+        raw_edges = data.get("citation_edges") or []
+        citation_edges = [
+            e if isinstance(e, CitationEdge) else CitationEdge.from_dict(e)
+            for e in raw_edges
+        ]
+        seed_ids = data.get("seed_paper_ids")
+        if seed_ids is None:
+            seed_ids = [s.paper_id for s in seeds]
+        return cls(
+            seed_paper_ids=list(seed_ids),
+            seeds=seeds,
+            discovered_candidates=discovered_candidates,
+            citation_edges=citation_edges,
+            direction=data.get("direction", "both"),
+            status=data.get("status", "completed"),
+            created_at=data.get("created_at") or "",
+            co_citation_matrix=dict(data.get("co_citation_matrix") or {}),
+        )
+
+    @classmethod
+    def from_json(cls, json_str: str) -> SnowballResult:
+        """Deserializes SnowballResult from JSON string."""
+        return cls.from_dict(json.loads(json_str))
+
 
