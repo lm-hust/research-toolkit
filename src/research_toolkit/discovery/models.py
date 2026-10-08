@@ -34,7 +34,8 @@ def clean_arxiv(aid: Optional[str]) -> Optional[str]:
     a = aid.lower().strip()
     a = re.sub(r"^arxiv:\s*", "", a)
     a = re.sub(r"v\d+$", "", a)
-    return a.strip()
+    res = a.strip()
+    return res if res else None
 
 
 def compute_paper_id(
@@ -220,6 +221,56 @@ class PaperCandidate:
     @classmethod
     def from_json(cls, json_str: str) -> PaperCandidate:
         """Deserializes candidate from JSON string."""
+        return cls.from_dict(json.loads(json_str))
+
+
+@dataclass
+class SearchPlan:
+    """
+    Structured literature search plan conforming to discovery contract.
+    """
+
+    query: str
+    research_objective: str = ""
+    compiled_queries: Dict[str, str] = field(default_factory=dict)
+    filters: Dict[str, Any] = field(default_factory=dict)
+    limits: Dict[str, int] = field(default_factory=dict)
+    created_at: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.created_at:
+            self.created_at = datetime.now(timezone.utc).isoformat()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes SearchPlan to dictionary."""
+        return {
+            "query": self.query,
+            "research_objective": self.research_objective,
+            "compiled_queries": dict(self.compiled_queries),
+            "filters": dict(self.filters),
+            "limits": dict(self.limits),
+            "created_at": self.created_at,
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        """Serializes SearchPlan to JSON string."""
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> SearchPlan:
+        """Deserializes SearchPlan from dictionary."""
+        return cls(
+            query=data.get("query", ""),
+            research_objective=data.get("research_objective", ""),
+            compiled_queries=dict(data.get("compiled_queries") or {}),
+            filters=dict(data.get("filters") or {}),
+            limits=dict(data.get("limits") or {}),
+            created_at=data.get("created_at", ""),
+        )
+
+    @classmethod
+    def from_json(cls, json_str: str) -> SearchPlan:
+        """Deserializes SearchPlan from JSON string."""
         return cls.from_dict(json.loads(json_str))
 
 
@@ -425,6 +476,7 @@ class SelectionResult:
     reasons: Dict[str, str] = field(default_factory=dict)
     status: str = "completed"
     created_at: str = ""
+    assessment_version: Optional[int] = None
 
     def __post_init__(self) -> None:
         if not self.created_at:
@@ -450,6 +502,7 @@ class SelectionResult:
             "reasons": dict(self.reasons),
             "status": self.status,
             "created_at": self.created_at,
+            "assessment_version": self.assessment_version,
         }
 
     def to_json(self, indent: Optional[int] = None) -> str:
@@ -477,6 +530,7 @@ class SelectionResult:
             reasons=dict(data.get("reasons") or {}),
             status=data.get("status", "completed"),
             created_at=data.get("created_at", ""),
+            assessment_version=data.get("assessment_version"),
         )
 
     @classmethod
@@ -539,6 +593,7 @@ class SnowballResult:
     status: str = "completed"  # "completed" | "partial_failure" | "budget_truncated"
     created_at: str = ""
     co_citation_matrix: Dict[str, int] = field(default_factory=dict)
+    discovery_path: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.created_at:
@@ -578,6 +633,7 @@ class SnowballResult:
             "status": self.status,
             "created_at": self.created_at,
             "co_citation_matrix": dict(self.co_citation_matrix),
+            "discovery_path": dict(self.discovery_path),
         }
 
     def to_json(self, indent: Optional[int] = None) -> str:
@@ -618,6 +674,7 @@ class SnowballResult:
             status=data.get("status", "completed"),
             created_at=data.get("created_at") or "",
             co_citation_matrix=dict(data.get("co_citation_matrix") or {}),
+            discovery_path=dict(data.get("discovery_path") or {}),
         )
 
     @classmethod

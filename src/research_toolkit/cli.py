@@ -565,11 +565,11 @@ def search(
         click.echo(batch.to_json(indent=2))
 
 
-def load_candidate_batch(val: str) -> PaperCandidateBatch:
-    """Loads a PaperCandidateBatch from a file path or resolves a batch ID."""
+def resolve_batch_path(val: str) -> Path:
+    """Resolves a batch ID or file path to an existing Path, or raises click.BadParameter."""
     p = Path(val)
     if p.is_file():
-        return PaperCandidateBatch.load(p)
+        return p
 
     search_paths = [
         Path.cwd() / ".research" / "batches" / f"{val}.json",
@@ -583,9 +583,15 @@ def load_candidate_batch(val: str) -> PaperCandidateBatch:
         ])
     for sp in search_paths:
         if sp.is_file():
-            return PaperCandidateBatch.load(sp)
+            return sp
 
-    raise click.BadParameter(f"Candidate batch file or ID '{val}' not found.")
+    raise click.BadParameter(f"Batch file or ID '{val}' not found.")
+
+
+def load_candidate_batch(val: str) -> PaperCandidateBatch:
+    """Loads a PaperCandidateBatch from a file path or resolves a batch ID."""
+    p = resolve_batch_path(val)
+    return PaperCandidateBatch.load(p)
 
 
 def load_assessment_records(val: str) -> list[AssessmentRecord]:
@@ -987,27 +993,9 @@ def load_export_batch(
     val: str,
 ) -> tuple[list[PaperCandidate], Optional[str], Optional[str]]:
     """Loads SelectionResult or PaperCandidateBatch from file path or batch ID."""
-    p = Path(val)
-    if p.is_file():
-        content = p.read_text(encoding="utf-8")
-        return parse_export_payload(content)
-
-    search_paths = [
-        Path.cwd() / ".research" / "batches" / f"{val}.json",
-        Path.cwd() / ".research" / "batches" / val,
-    ]
-    batch_dir = os.getenv("RESEARCH_BATCH_DIR") or os.getenv("RESEARCH_DATA_DIR")
-    if batch_dir:
-        search_paths.extend([
-            Path(batch_dir) / f"{val}.json",
-            Path(batch_dir) / val,
-        ])
-    for sp in search_paths:
-        if sp.is_file():
-            content = sp.read_text(encoding="utf-8")
-            return parse_export_payload(content)
-
-    raise click.BadParameter(f"Batch or selection file/ID '{val}' not found.")
+    p = resolve_batch_path(val)
+    content = p.read_text(encoding="utf-8")
+    return parse_export_payload(content)
 
 
 def format_export_table(

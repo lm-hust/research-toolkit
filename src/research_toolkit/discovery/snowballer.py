@@ -283,8 +283,6 @@ class CitationSnowballer:
                         cand_id = self._normalize_oa_id(cand.paper_id)
                         cand.topological_role = "foundational"
                         cand.co_citation_count = ref_counter.get(cand_id, 1)
-                        if cand.relevance_score <= 0.0:
-                            cand.relevance_score = 0.85
                         foundational_candidates.append(cand)
                 except Exception as e:
                     logger.warning("Error fetching foundational backward citations: %s", e)
@@ -307,8 +305,6 @@ class CitationSnowballer:
                         coupling_count = 1
                     cand.co_citation_count = coupling_count
                     cand.topological_role = "recent_advancement"
-                    if cand.relevance_score <= 0.0:
-                        cand.relevance_score = 0.85
                     # Legacy heuristic cutoff eliminated: single-seed forward citations retained
                     recent_advancements.append(cand)
 
@@ -390,6 +386,10 @@ class CitationSnowballer:
                         )
                     )
 
+        discovery_path: Dict[str, str] = {
+            c.paper_id: c.topological_role for c in strictly_discovered
+        }
+
         return SnowballResult(
             seed_paper_ids=[s.paper_id for s in normalized_seeds],
             seeds=normalized_seeds,
@@ -398,4 +398,5 @@ class CitationSnowballer:
             direction=direction,
             status=status,
             co_citation_matrix=dict(ref_counter),
+            discovery_path=discovery_path,
         )

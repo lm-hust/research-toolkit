@@ -97,28 +97,13 @@ class ZoteroManager:
         created_items: List[Dict[str, Any]] = []
 
         if dry_run:
-            col_key = "dry-run-preview"
-            col_name = collection_name
-            user_id = getattr(self.client, "user_id", "")
-            try:
-                collections_data = self.client._request("GET", "/collections")
-                for col in collections_data:
-                    c_data = col.get("data", {})
-                    if (
-                        col.get("key", "").strip() == collection_name.strip()
-                        or c_data.get("name", "").strip().lower() == collection_name.strip().lower()
-                    ):
-                        col_key = col.get("key", "")
-                        col_name = c_data.get("name", collection_name)
-                        break
-            except Exception:
-                pass
-
-            collection = ZoteroCollection(
-                key=col_key,
-                name=col_name,
-                user_id=user_id,
-            )
+            collection = self.client.get_collection(collection_name)
+            if not collection:
+                collection = ZoteroCollection(
+                    key="dry-run-preview",
+                    name=collection_name,
+                    user_id=getattr(self.client, "user_id", ""),
+                )
 
             for c in candidates:
                 existing = None
@@ -211,6 +196,9 @@ class ZoteroManager:
                 )
             )
         return candidates
+
+    # Alias for sync_to_collection conforming to review spec
+    sync_or_attach_candidates = sync_to_collection
 
     def _parse_author_name(self, name_str: str) -> Dict[str, str]:
         parts = name_str.strip().split()

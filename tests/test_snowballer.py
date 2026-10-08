@@ -80,6 +80,7 @@ class TestCitationSnowballer(unittest.TestCase):
             citation_edges=[edge],
             direction="both",
             status="completed",
+            discovery_path={"https://openalex.org/W_found1": "foundational"},
         )
 
         # Seed partition check
@@ -87,6 +88,7 @@ class TestCitationSnowballer(unittest.TestCase):
         self.assertEqual(len(res.seeds), 1)
         self.assertEqual(len(res.discovered_candidates), 2)
         self.assertNotIn(seed, res.discovered_candidates)
+        self.assertEqual(res.discovery_path["https://openalex.org/W_found1"], "foundational")
 
         # Backward compatibility properties
         self.assertEqual(len(res.all_candidates), 3)
@@ -101,6 +103,7 @@ class TestCitationSnowballer(unittest.TestCase):
         self.assertEqual(len(reconstructed.discovered_candidates), 2)
         self.assertEqual(len(reconstructed.citation_edges), 1)
         self.assertEqual(reconstructed.citation_edges[0].direction, "referenced_by")
+        self.assertEqual(reconstructed.discovery_path["https://openalex.org/W_found1"], "foundational")
 
     def test_seed_adapters(self):
         """Verifies seed ingestion across SelectionResult, PaperCandidateBatch, explicit IDs, and Zotero."""
@@ -223,6 +226,14 @@ class TestCitationSnowballer(unittest.TestCase):
         # Recent advancement cites seeds
         fwd_edges = [e for e in edges if e.direction == "cites"]
         self.assertTrue(any(e.target_id in ("doi:10.1000/fwd1", "https://openalex.org/W_fwd1") for e in fwd_edges))
+
+        # Check that fake 0.85 relevance_score was NOT injected
+        self.assertEqual(f1.relevance_score, 0.0)
+        self.assertEqual(fwd.relevance_score, 0.0)
+
+        # Check discovery_path populated
+        self.assertEqual(result.discovery_path[f1.paper_id], "foundational")
+        self.assertEqual(result.discovery_path[fwd.paper_id], "recent_advancement")
 
     def test_elimination_of_legacy_cutoff_retains_single_seed_forward_citation(self):
         """

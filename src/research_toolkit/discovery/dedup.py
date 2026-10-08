@@ -9,7 +9,11 @@ import difflib
 import re
 from typing import Dict, List, Optional, Tuple
 
-from research_toolkit.discovery.models import PaperCandidate
+from research_toolkit.discovery.models import (
+    PaperCandidate,
+    clean_arxiv,
+    clean_doi,
+)
 
 
 class Deduplicator:
@@ -23,21 +27,11 @@ class Deduplicator:
 
     @staticmethod
     def clean_doi(doi: Optional[str]) -> Optional[str]:
-        if not doi:
-            return None
-        d = doi.lower().strip()
-        d = re.sub(r"^https?://(dx\.)?doi\.org/", "", d)
-        d = re.sub(r"^doi:", "", d)
-        return d.strip("/")
+        return clean_doi(doi)
 
     @staticmethod
     def clean_arxiv(aid: Optional[str]) -> Optional[str]:
-        if not aid:
-            return None
-        a = aid.lower().strip()
-        a = re.sub(r"^arxiv:", "", a)
-        a = re.sub(r"v\d+$", "", a)
-        return a.strip()
+        return clean_arxiv(aid)
 
     @staticmethod
     def clean_title(title: str) -> str:

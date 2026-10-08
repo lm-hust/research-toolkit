@@ -199,12 +199,29 @@ class TestRanker(unittest.TestCase):
         # S_rel = 0.8
         # S_cite = log(1+100) / log(1+max(100, 100)) = 1.0
         # S_venue = fallback 0.5 (unknown)
-        # S_recency = 1.0 - 0.1 * (2026 - 2024) = 0.8
-        # Expected: 0.50*0.8 + 0.25*1.0 + 0.15*0.5 + 0.10*0.8 = 0.40 + 0.25 + 0.075 + 0.08 = 0.8050
+        # S_recency = 1.0 (age = 2026 - 2024 = 2 <= 3)
+        # Expected: 0.50*0.8 + 0.25*1.0 + 0.15*0.5 + 0.10*1.0 = 0.40 + 0.25 + 0.075 + 0.10 = 0.8250
         breakdown = self.ranker.score_breakdown(paper, batch_max_cites=100)
         self.assertAlmostEqual(breakdown["s_rel"], 0.8, places=4)
         self.assertAlmostEqual(breakdown["s_cite"], 1.0, places=4)
         self.assertAlmostEqual(breakdown["s_venue"], 0.5, places=4)
+        self.assertAlmostEqual(breakdown["s_recency"], 1.0, places=4)
+        self.assertAlmostEqual(breakdown["composite"], 0.8250, places=4)
+
+    def test_composite_ranking_formula_older_paper_recency_decay(self):
+        """Verifies linear recency decay applies only for publications older than 3 years."""
+        paper_old = PaperCandidate(
+            paper_id="p_old",
+            title="Old Paper",
+            year=2021,
+            citation_count=100,
+            venue="Unknown Venue",
+            venue_impact=0.0,
+            relevance_score=0.8,
+        )
+        # age = 2026 - 2021 = 5 > 3 -> 1.0 - 0.1 * (5 - 3) = 0.8
+        # Expected: 0.50*0.8 + 0.25*1.0 + 0.15*0.5 + 0.10*0.8 = 0.8050
+        breakdown = self.ranker.score_breakdown(paper_old, batch_max_cites=100)
         self.assertAlmostEqual(breakdown["s_recency"], 0.8, places=4)
         self.assertAlmostEqual(breakdown["composite"], 0.8050, places=4)
 
@@ -274,7 +291,7 @@ class TestRanker(unittest.TestCase):
         self.assertNotIn("p_zero", result.selected_paper_ids)
 
     def test_mmr_diversity_team_soft_penalty(self):
-        """Candidates sharing primary first author with already-selected papers receive 0.7 discount."""
+        """Candidates sharing primary first author receive 0.7 discount once author has multiple entries (>=2)."""
         p_vaswani_1 = PaperCandidate(
             paper_id="v1",
             title="Attention Is All You Need",
@@ -291,6 +308,14 @@ class TestRanker(unittest.TestCase):
             citation_count=90,
             relevance_score=0.90,
         )
+        p_vaswani_3 = PaperCandidate(
+            paper_id="v3",
+            title="Switch Transformers",
+            authors=["Vaswani, Ashish", "Fedus, William"],
+            year=2024,
+            citation_count=85,
+            relevance_score=0.88,
+        )
         p_lecun = PaperCandidate(
             paper_id="lecun",
             title="Self-Supervised Learning",
@@ -301,21 +326,24 @@ class TestRanker(unittest.TestCase):
         )
 
         # With greedy MMR:
-        # Round 1: v1 is chosen. Primary author 'vaswani' is recorded.
-        # Round 2: v2 has author 'vaswani', so its score is discounted by 0.7.
-        # lecun has author 'lecun', score is untouched.
-        # lecun should beat discounted v2!
+        # Round 1: v1 is chosen. Vaswani count = 1 (< 2, no discount).
+        # Round 2: v2 is chosen. Vaswani count = 2 (multiple entries now represented!).
+        # Round 3: v3 has author 'vaswani' with count 2 >= 2, so score is discounted by 0.7.
+        # lecun has author 'lecun' (count 0), score is untouched.
+        # lecun should beat discounted v3!
         result = self.ranker.select(
-            candidates=[p_vaswani_1, p_vaswani_2, p_lecun],
-            requested_n=3,
+            candidates=[p_vaswani_1, p_vaswani_2, p_vaswani_3, p_lecun],
+            requested_n=4,
         )
-        self.assertEqual(len(result.selected_papers), 3)
+        self.assertEqual(len(result.selected_papers), 4)
         self.assertEqual(result.selected_papers[0].paper_id, "v1")
-        self.assertEqual(result.selected_papers[1].paper_id, "lecun")
-        self.assertEqual(result.selected_papers[2].paper_id, "v2")
+        self.assertEqual(result.selected_papers[1].paper_id, "v2")
+        self.assertEqual(result.selected_papers[2].paper_id, "lecun")
+        self.assertEqual(result.selected_papers[3].paper_id, "v3")
 
-        # Verify reasons note the diversity penalty on v2
-        self.assertIn("MMR diversity discount", result.reasons["v2"])
+        # Verify reasons note the diversity penalty on v3, but not on v2
+        self.assertNotIn("MMR diversity discount", result.reasons["v2"])
+        self.assertIn("MMR diversity discount", result.reasons["v3"])
 
     def test_fallback_when_eligible_fewer_than_requested_n(self):
         """When fewer than n candidates are eligible, strictly return only eligible and warn to stderr."""

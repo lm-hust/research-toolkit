@@ -181,22 +181,41 @@ class TestRankCli(unittest.TestCase):
             self.assertIn("Foundational attention paper", res.reasons["doi:10.1000/attention"])
 
     def test_rank_cli_mmr_diversity_ordering(self):
-        """Greedy MMR promotes different first author team when duplicate first author is present."""
-        batch_json = self.batch.to_json()
+        """Greedy MMR promotes different first author team when primary author has multiple entries (>=2)."""
+        p_v3 = PaperCandidate(
+            paper_id="doi:10.1000/transformers_moe",
+            title="Switch Transformers",
+            authors=["Vaswani, Ashish", "Fedus, William"],
+            year=2024,
+            citation_count=170,
+            relevance_score=0.89,
+            venue="JMLR",
+            venue_impact=15.0,
+            doi="10.1000/transformers_moe",
+        )
+        batch = PaperCandidateBatch(
+            batch_id="batch_mmr_diversity",
+            query="Deep Learning Architecture",
+            papers=[self.p1, self.p2, p_v3, self.p3, self.p_unrelated],
+            status="completed",
+        )
+        batch_json = batch.to_json()
         result = self.runner.invoke(
             cli,
-            ["rank", "-n", "3"],
+            ["rank", "-n", "4"],
             input=batch_json,
         )
         self.assertEqual(result.exit_code, 0)
         res = SelectionResult.from_json(result.stdout.strip())
 
-        # Vaswani 1 is picked first
+        # Vaswani 1 is picked first (count=1)
         self.assertEqual(res.selected_papers[0].paper_id, "doi:10.1000/attention")
-        # LeCun is picked second due to MMR penalty on Vaswani 2
-        self.assertEqual(res.selected_papers[1].paper_id, "doi:10.1000/self_supervised")
-        # Vaswani 2 is picked third (discounted)
-        self.assertEqual(res.selected_papers[2].paper_id, "doi:10.1000/transformers_scale")
+        # Vaswani 2 is picked second (count=2, no discount yet)
+        self.assertEqual(res.selected_papers[1].paper_id, "doi:10.1000/transformers_scale")
+        # LeCun is picked third due to MMR penalty on Vaswani 3 (count >= 2)
+        self.assertEqual(res.selected_papers[2].paper_id, "doi:10.1000/self_supervised")
+        # Vaswani 3 is picked fourth (discounted)
+        self.assertEqual(res.selected_papers[3].paper_id, "doi:10.1000/transformers_moe")
 
     def test_rank_cli_insufficient_eligible_candidates_warning_stderr(self):
         """When fewer than requested n eligible candidates exist, returns only eligible and warns to stderr."""

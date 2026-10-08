@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 import sys
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from research_toolkit.discovery.models import (
     AssessmentRecord,
@@ -204,9 +204,13 @@ class Ranker:
         else:
             s_venue = 0.5  # fallback 0.5 if unknown
 
-        # S_recency: max(0.0, 1.0 - 0.1 * (current_year - year))
+        # S_recency: max(0.0, 1.0 - 0.1 * (age - 3)) only when age > 3
         year = p.year or self.current_year
-        s_recency = min(1.0, max(0.0, 1.0 - 0.1 * (self.current_year - year)))
+        age = self.current_year - year
+        if age <= 3:
+            s_recency = 1.0
+        else:
+            s_recency = max(0.0, 1.0 - 0.1 * (age - 3))
 
         composite = 0.50 * s_rel + 0.25 * s_cite + 0.15 * s_venue + 0.10 * s_recency
         return {
@@ -293,7 +297,7 @@ class Ranker:
         selected_papers: List[PaperCandidate] = []
         selected_scores: Dict[str, float] = {}
         selected_reasons: Dict[str, str] = {}
-        selected_primary_authors: Set[str] = set()
+        author_counts: Dict[str, int] = {}
 
         while len(selected_papers) < requested_n and pool:
             best_cand: Optional[PaperCandidate] = None
@@ -304,7 +308,7 @@ class Ranker:
 
             for cand in pool:
                 author = extract_primary_author(cand)
-                is_discounted = bool(author and author in selected_primary_authors)
+                is_discounted = bool(author and author_counts.get(author, 0) >= 2)
                 multiplier = diversity_discount if is_discounted else 1.0
                 effective_score = round(cand.composite_score * multiplier, 4)
 
@@ -328,7 +332,7 @@ class Ranker:
             pool.remove(best_cand)
             selected_papers.append(best_cand)
             if best_author:
-                selected_primary_authors.add(best_author)
+                author_counts[best_author] = author_counts.get(best_author, 0) + 1
             selected_scores[best_cand.paper_id] = best_effective_score
 
             cand_assessment = get_assessment(best_cand)
@@ -360,6 +364,12 @@ class Ranker:
         else:
             status = "completed"
 
+        max_assessment_version = (
+            max((r.version for r in assessment_map.values()), default=None)
+            if assessment_map
+            else None
+        )
+
         return SelectionResult(
             batch_id=batch_id,
             strategy=strategy,
@@ -369,5 +379,6 @@ class Ranker:
             scores=selected_scores,
             reasons=selected_reasons,
             status=status,
+            assessment_version=max_assessment_version,
         )
 
