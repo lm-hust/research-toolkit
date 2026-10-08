@@ -114,40 +114,57 @@ class ZoteroClient:
             logger.warning("Failed to download cloud file for attachment item %s: %s", item_key, e)
         return None
 
-    def get_or_create_collection(
-        self, name: str, parent_key: Optional[str] = None
-    ) -> ZoteroCollection:
-        """Finds collection by name or creates it in the personal library."""
-        collections_data = self._request("GET", "/collections")
-        for col in collections_data:
-            c_data = col.get("data", {})
-            if (
-                col.get("key", "").strip() == name.strip()
-                or c_data.get("name", "").strip().lower() == name.strip().lower()
-            ):
-                return ZoteroCollection(
-                    key=col.get("key", ""),
-                    name=c_data.get("name", name),
-                    parent_collection=c_data.get("parentCollection") or None,
-                    version=col.get("version", 0),
-                    user_id=self.user_id,
-                )
+    def get_collection(self, key_or_name: str) -> Optional[ZoteroCollection]:
+        """
+        Queries /collections and matches by key or case-insensitive name,
+        returning a ZoteroCollection domain model, or None if not found.
+        """
+        target = (key_or_name or "").strip()
+        if not target:
+            return None
 
-        # Check if name is an existing collection key directly
-        if len(name.strip()) == 8 and name.strip().isalnum():
-            try:
-                col = self._request("GET", f"/collections/{name.strip()}")
-                if isinstance(col, dict) and "key" in col:
-                    c_data = col.get("data", {})
+        try:
+            collections_data = self._request("GET", "/collections")
+            for col in collections_data:
+                c_data = col.get("data", {})
+                if (
+                    col.get("key", "").strip() == target
+                    or c_data.get("name", "").strip().lower() == target.lower()
+                ):
                     return ZoteroCollection(
                         key=col.get("key", ""),
-                        name=c_data.get("name", name),
+                        name=c_data.get("name", target),
                         parent_collection=c_data.get("parentCollection") or None,
                         version=col.get("version", 0),
                         user_id=self.user_id,
                     )
-            except Exception:
-                pass
+
+            # Check if name is an existing collection key directly (e.g. 8-char alnum key)
+            if len(target) == 8 and target.isalnum():
+                try:
+                    col = self._request("GET", f"/collections/{target}")
+                    if isinstance(col, dict) and "key" in col:
+                        c_data = col.get("data", {})
+                        return ZoteroCollection(
+                            key=col.get("key", ""),
+                            name=c_data.get("name", target),
+                            parent_collection=c_data.get("parentCollection") or None,
+                            version=col.get("version", 0),
+                            user_id=self.user_id,
+                        )
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning("Failed to query collections for '%s': %s", key_or_name, e)
+        return None
+
+    def get_or_create_collection(
+        self, name: str, parent_key: Optional[str] = None
+    ) -> ZoteroCollection:
+        """Finds collection by name or creates it in the personal library."""
+        existing = self.get_collection(name)
+        if existing:
+            return existing
 
         # Create new collection
         payload = [{"name": name, "parentCollection": parent_key or False}]

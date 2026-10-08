@@ -4,14 +4,20 @@ Tests for PaperCandidateBatch, PaperCandidate primary identity, and atomic batch
 Conforms to Ticket #41 data contract requirements.
 """
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import click
+
+from research_toolkit.cli import resolve_batch_path
 from research_toolkit.discovery.models import (
     AssessmentRecord,
     PaperCandidate,
     PaperCandidateBatch,
+    SearchPlan,
     SelectionResult,
     clean_doi,
     compute_paper_id,
@@ -267,6 +273,60 @@ class TestCandidateBatchContracts(unittest.TestCase):
         self.assertEqual(from_json_sel.batch_id, "batch_001")
         self.assertEqual(from_json_sel.scores, sel.scores)
         self.assertEqual(from_json_sel.reasons, sel.reasons)
+
+    def test_search_plan_model_and_serialization(self):
+        """SearchPlan encapsulates search plan contract and serializes to/from dict/JSON."""
+        sp = SearchPlan(
+            query="quantum computing",
+            research_objective="Survey NISQ algorithms",
+            compiled_queries={"s2": "quantum AND NISQ", "openalex": "quantum NISQ algorithms"},
+            filters={"year": "2020-2026"},
+            limits={"total": 50},
+        )
+        self.assertEqual(sp.query, "quantum computing")
+        self.assertEqual(sp.research_objective, "Survey NISQ algorithms")
+        self.assertTrue(sp.created_at)
+
+        d = sp.to_dict()
+        self.assertEqual(d["query"], "quantum computing")
+        self.assertEqual(d["compiled_queries"]["s2"], "quantum AND NISQ")
+
+        restored = SearchPlan.from_dict(d)
+        self.assertEqual(restored.query, sp.query)
+        self.assertEqual(restored.research_objective, sp.research_objective)
+        self.assertEqual(restored.compiled_queries, sp.compiled_queries)
+
+        json_str = sp.to_json()
+        from_json_sp = SearchPlan.from_json(json_str)
+        self.assertEqual(from_json_sp.query, sp.query)
+        self.assertEqual(from_json_sp.filters, sp.filters)
+
+    def test_selection_result_assessment_version(self):
+        """SelectionResult tracks assessment_version through dict and JSON roundtrips."""
+        sel = SelectionResult(
+            batch_id="batch_v",
+            assessment_version=3,
+        )
+        self.assertEqual(sel.assessment_version, 3)
+        d = sel.to_dict()
+        self.assertEqual(d["assessment_version"], 3)
+        restored = SelectionResult.from_dict(d)
+        self.assertEqual(restored.assessment_version, 3)
+
+    def test_resolve_batch_path(self):
+        """resolve_batch_path locates existing files or resolves batch IDs in batch dirs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "direct.json"
+            file_path.write_text("{}", encoding="utf-8")
+            self.assertEqual(resolve_batch_path(str(file_path)), file_path)
+
+            batch_file = Path(tmpdir) / "batch_123.json"
+            batch_file.write_text("{}", encoding="utf-8")
+            with patch.dict(os.environ, {"RESEARCH_BATCH_DIR": tmpdir}):
+                self.assertEqual(resolve_batch_path("batch_123"), batch_file)
+
+            with self.assertRaises(click.BadParameter):
+                resolve_batch_path("nonexistent_batch_xyz")
 
 
 if __name__ == "__main__":
