@@ -18,6 +18,7 @@ class TestCliSuite(unittest.TestCase):
     def test_cli_help(self):
         result = self.runner.invoke(cli, ["--help"])
         self.assertEqual(result.exit_code, 0)
+        self.assertIn("scout", result.output)
         self.assertIn("search", result.output)
         self.assertIn("checkpoint", result.output)
         self.assertIn("sync-notebook", result.output)
