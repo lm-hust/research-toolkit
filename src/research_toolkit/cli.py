@@ -17,6 +17,7 @@ import click
 from research_toolkit.discovery.curation import CurationCheckpoint
 from research_toolkit.discovery.models import (
     AssessmentRecord,
+    PaperCandidate,
     PaperCandidateBatch,
     SelectionResult,
 )
@@ -24,6 +25,7 @@ from research_toolkit.discovery.ranker import Ranker
 from research_toolkit.discovery.service import DiscoveryService
 from research_toolkit.synthesis.adapters import get_default_gateway
 from research_toolkit.zotero.manager import ZoteroManager
+from research_toolkit.zotero.models import SyncResult
 
 logger = logging.getLogger(__name__)
 
@@ -465,6 +467,247 @@ def rank(
             click.echo("No eligible candidates found.", err=True)
 
     click.echo(result.to_json(indent=2))
+
+
+def parse_export_payload(
+    raw_json: str,
+) -> tuple[list[PaperCandidate], Optional[str], Optional[str]]:
+    """
+    Parses a JSON string representing SelectionResult or PaperCandidateBatch.
+    Returns (candidates, batch_id, topic).
+    """
+    data = json.loads(raw_json)
+    if isinstance(data, dict):
+        if "selected_papers" in data:
+            sel = SelectionResult.from_dict(data)
+            return sel.selected_papers, sel.batch_id, None
+        elif "papers" in data:
+            batch = PaperCandidateBatch.from_dict(data)
+            return batch.papers, batch.batch_id, batch.topic or batch.query
+        else:
+            raise click.BadParameter(
+                "JSON payload must contain 'selected_papers' or 'papers'."
+            )
+    elif isinstance(data, list):
+        papers = [
+            p if isinstance(p, PaperCandidate) else PaperCandidate.from_dict(p)
+            for p in data
+        ]
+        return papers, None, None
+    raise click.BadParameter("Invalid JSON payload structure.")
+
+
+def load_export_batch(
+    val: str,
+) -> tuple[list[PaperCandidate], Optional[str], Optional[str]]:
+    """Loads SelectionResult or PaperCandidateBatch from file path or batch ID."""
+    p = Path(val)
+    if p.is_file():
+        content = p.read_text(encoding="utf-8")
+        return parse_export_payload(content)
+
+    search_paths = [
+        Path.cwd() / ".research" / "batches" / f"{val}.json",
+        Path.cwd() / ".research" / "batches" / val,
+    ]
+    batch_dir = os.getenv("RESEARCH_BATCH_DIR") or os.getenv("RESEARCH_DATA_DIR")
+    if batch_dir:
+        search_paths.extend([
+            Path(batch_dir) / f"{val}.json",
+            Path(batch_dir) / val,
+        ])
+    for sp in search_paths:
+        if sp.is_file():
+            content = sp.read_text(encoding="utf-8")
+            return parse_export_payload(content)
+
+    raise click.BadParameter(f"Batch or selection file/ID '{val}' not found.")
+
+
+def format_export_table(
+    collection_name: str,
+    collection_key: str,
+    candidates: list[PaperCandidate],
+    sync_result: SyncResult,
+) -> str:
+    """Formats exported candidates and collection sync summary into a Rich terminal table."""
+    if not candidates:
+        return f"No candidate papers to export for collection '{collection_name}'."
+
+    try:
+        import io
+
+        from rich.console import Console
+        from rich.table import Table
+
+        from research_toolkit.discovery.dedup import Deduplicator
+
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=False, color_system=None, width=120)
+        table = Table(
+            title=f"Zotero Library Export: '{collection_name}' (Key: {collection_key}, Total: {len(candidates)})",
+            show_header=True,
+            header_style="bold",
+        )
+        table.add_column("#", justify="right", style="cyan", width=4)
+        table.add_column("Status", justify="center", width=10)
+        table.add_column("Type", justify="center", width=6)
+        table.add_column("Title", style="bold", min_width=35)
+        table.add_column("Author", min_width=12)
+        table.add_column("Year", justify="center", width=6)
+        table.add_column("DOI / Identifier", min_width=20)
+
+        # Index existing/reused items by DOI or title
+        reused_dois = set()
+        reused_titles = set()
+        for r_item in sync_result.reused_items:
+            r_data = r_item.get("data", {}) if isinstance(r_item, dict) else {}
+            r_doi = Deduplicator.clean_doi(r_data.get("DOI"))
+            if r_doi:
+                reused_dois.add(r_doi)
+            r_t = Deduplicator.clean_title(r_data.get("title", ""))
+            if r_t:
+                reused_titles.add(r_t)
+
+        for idx, p in enumerate(candidates, start=1):
+            if p.is_review:
+                doc_type = "[REV]"
+            elif p.is_preprint:
+                doc_type = "[PRE]"
+            else:
+                doc_type = "[RES]"
+
+            first_author = p.authors[0] if p.authors else "-"
+            if len(first_author) > 15:
+                first_author = first_author[:13] + ".."
+
+            title_disp = (p.title[:45] + "...") if len(p.title) > 48 else p.title
+            doi_disp = p.doi or p.arxiv_id or p.paper_id or "-"
+
+            p_doi = Deduplicator.clean_doi(p.doi) if p.doi else ""
+            p_title = Deduplicator.clean_title(p.title) if p.title else ""
+            is_reused = (p_doi and p_doi in reused_dois) or (
+                not p_doi and p_title and p_title in reused_titles
+            )
+            status_tag = "[REUSED]" if is_reused else "[CREATED]"
+
+            table.add_row(
+                str(idx),
+                status_tag,
+                doc_type,
+                title_disp,
+                first_author,
+                str(p.year or "-"),
+                doi_disp,
+            )
+
+        console.print(table)
+        return buf.getvalue()
+    except ImportError:
+        return f"Exported {len(candidates)} papers to '{collection_name}'."
+
+
+@cli.command("export")
+@click.option(
+    "--batch",
+    "-b",
+    default=None,
+    help="Candidate batch or selection result ID or file path.",
+)
+@click.option(
+    "--collection",
+    "-c",
+    default=None,
+    help="Target Zotero collection name or key. Defaults to active collection in session.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview export without modifying Zotero personal library.",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress table and progress output to stderr.",
+)
+def export(
+    batch: Optional[str],
+    collection: Optional[str],
+    dry_run: bool,
+    quiet: bool,
+) -> None:
+    """Exports literature candidates to personal Zotero library collection."""
+    candidates: list[PaperCandidate] = []
+    batch_id: Optional[str] = None
+    topic: Optional[str] = None
+
+    if batch:
+        candidates, batch_id, topic = load_export_batch(batch)
+    else:
+        stdin_stream = sys.stdin
+        stdin_data = ""
+        if not stdin_stream.isatty():
+            stdin_data = stdin_stream.read().strip()
+        if stdin_data:
+            candidates, batch_id, topic = parse_export_payload(stdin_data)
+        else:
+            session = load_session()
+            active_file = session.get("active_batch_file")
+            if active_file and Path(active_file).is_file():
+                candidates, batch_id, topic = load_export_batch(active_file)
+            else:
+                raise click.UsageError(
+                    "Candidate batch or selection result must be provided via stdin JSON stream or --batch <path_or_id>."
+                )
+
+    session = load_session()
+    target_col = collection or session.get("active_collection")
+    if not target_col:
+        raise click.UsageError(
+            "No target collection specified. Provide --collection <name_or_key> or set active collection in session."
+        )
+
+    if not quiet:
+        click.echo(
+            f"Exporting {len(candidates)} papers to Zotero collection '{target_col}'...",
+            err=True,
+        )
+
+    zotero_mgr = ZoteroManager()
+    col_obj, sync_res = zotero_mgr.sync_to_collection(
+        target_col,
+        candidates,
+        auto_download_oa=not dry_run,
+        dry_run=dry_run,
+    )
+
+    if not dry_run:
+        session["active_collection"] = col_obj.name
+        session["active_collection_key"] = col_obj.key
+        save_session(session)
+
+    if not quiet:
+        table_disp = format_export_table(col_obj.name, col_obj.key, candidates, sync_res)
+        click.echo(table_disp, err=True)
+        if dry_run:
+            click.echo(
+                f"[dry-run] Preview: {sync_res.created_count} new, {sync_res.reused_count} existing. No changes committed.",
+                err=True,
+            )
+        else:
+            click.echo(
+                f"✨ Successfully exported {sync_res.total_count} papers to '{col_obj.name}' (Key: {col_obj.key}).",
+                err=True,
+            )
+        if col_obj.web_url:
+            click.echo(f"🔗 Collection URL: {col_obj.web_url}", err=True)
+
+    summary = sync_res.to_dict()
+    summary["dry_run"] = dry_run
+    click.echo(json.dumps(summary, indent=2))
 
 
 @cli.command("expand")

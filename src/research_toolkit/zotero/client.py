@@ -121,7 +121,10 @@ class ZoteroClient:
         collections_data = self._request("GET", "/collections")
         for col in collections_data:
             c_data = col.get("data", {})
-            if c_data.get("name", "").strip().lower() == name.strip().lower():
+            if (
+                col.get("key", "").strip() == name.strip()
+                or c_data.get("name", "").strip().lower() == name.strip().lower()
+            ):
                 return ZoteroCollection(
                     key=col.get("key", ""),
                     name=c_data.get("name", name),
@@ -129,6 +132,22 @@ class ZoteroClient:
                     version=col.get("version", 0),
                     user_id=self.user_id,
                 )
+
+        # Check if name is an existing collection key directly
+        if len(name.strip()) == 8 and name.strip().isalnum():
+            try:
+                col = self._request("GET", f"/collections/{name.strip()}")
+                if isinstance(col, dict) and "key" in col:
+                    c_data = col.get("data", {})
+                    return ZoteroCollection(
+                        key=col.get("key", ""),
+                        name=c_data.get("name", name),
+                        parent_collection=c_data.get("parentCollection") or None,
+                        version=col.get("version", 0),
+                        user_id=self.user_id,
+                    )
+            except Exception:
+                pass
 
         # Create new collection
         payload = [{"name": name, "parentCollection": parent_key or False}]

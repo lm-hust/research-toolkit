@@ -83,18 +83,78 @@ class ZoteroManager:
         collection_name: str,
         candidates: List[PaperCandidate],
         auto_download_oa: bool = True,
+        dry_run: bool = False,
     ) -> Tuple[ZoteroCollection, SyncResult]:
         """
         Creates/gets collection and syncs candidates.
         If a paper already exists in the Zotero library (matched by canonical DOI or title),
         it appends the target collection to the existing item without creating duplicates.
         New papers are batch created with OA attachments.
+        If dry_run is True, previews sync without mutating Zotero.
         """
-        collection = self.get_or_create_collection(collection_name)
-        col_key = collection.key
-
         new_candidates: List[PaperCandidate] = []
         reused_items: List[Dict[str, Any]] = []
+        created_items: List[Dict[str, Any]] = []
+
+        if dry_run:
+            col_key = "dry-run-preview"
+            col_name = collection_name
+            user_id = getattr(self.client, "user_id", "")
+            try:
+                collections_data = self.client._request("GET", "/collections")
+                for col in collections_data:
+                    c_data = col.get("data", {})
+                    if (
+                        col.get("key", "").strip() == collection_name.strip()
+                        or c_data.get("name", "").strip().lower() == collection_name.strip().lower()
+                    ):
+                        col_key = col.get("key", "")
+                        col_name = c_data.get("name", collection_name)
+                        break
+            except Exception:
+                pass
+
+            collection = ZoteroCollection(
+                key=col_key,
+                name=col_name,
+                user_id=user_id,
+            )
+
+            for c in candidates:
+                existing = None
+                try:
+                    existing = self.client.find_existing_item(doi=c.doi, title=c.title)
+                except Exception:
+                    existing = None
+                if existing:
+                    reused_items.append(existing)
+                else:
+                    new_candidates.append(c)
+
+            created_items = [
+                {
+                    "key": f"dry_run_{c.paper_id or idx}",
+                    "data": {
+                        "title": c.title,
+                        "DOI": c.doi or "",
+                    },
+                }
+                for idx, c in enumerate(new_candidates, 1)
+            ]
+
+            sync_result = SyncResult(
+                collection_key=collection.key,
+                collection_name=collection.name,
+                collection_url=collection.web_url,
+                created_count=len(created_items),
+                reused_count=len(reused_items),
+                created_items=created_items,
+                reused_items=reused_items,
+            )
+            return collection, sync_result
+
+        collection = self.get_or_create_collection(collection_name)
+        col_key = collection.key
 
         for c in candidates:
             existing = self.client.find_existing_item(doi=c.doi, title=c.title)
@@ -104,7 +164,6 @@ class ZoteroManager:
             else:
                 new_candidates.append(c)
 
-        created_items: List[Dict[str, Any]] = []
         if new_candidates:
             created_items = self.sync_candidates(
                 collection_name=collection_name,
