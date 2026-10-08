@@ -334,3 +334,147 @@ class PaperCandidateBatch:
         path = Path(file_path)
         content = path.read_text(encoding="utf-8")
         return cls.from_json(content)
+
+
+@dataclass
+class AssessmentRecord:
+    """
+    Structured qualitative and quantitative relevance assessment for a candidate paper.
+    Conforms to Ticket #42 data contract.
+    """
+
+    paper_id: str
+    decision: str = "pending"  # "related" | "unrelated" | "pending"
+    batch_id: Optional[str] = None
+    relevance_score: Optional[float] = None  # 0.0 to 1.0; 0.0 if unrelated; None if pending
+    reason: str = ""
+    evidence: str = ""
+    assessor: str = "lit-scout"  # e.g. "lit-scout" or "user"
+    created_at: str = ""
+    version: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.created_at:
+            self.created_at = datetime.now(timezone.utc).isoformat()
+        if self.decision == "unrelated":
+            self.relevance_score = 0.0
+        elif self.decision == "pending":
+            self.relevance_score = None
+        elif self.decision == "related" and self.relevance_score is not None:
+            self.relevance_score = max(0.0, min(1.0, float(self.relevance_score)))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes AssessmentRecord to dictionary."""
+        return {
+            "paper_id": self.paper_id,
+            "batch_id": self.batch_id,
+            "decision": self.decision,
+            "relevance_score": self.relevance_score,
+            "reason": self.reason,
+            "evidence": self.evidence,
+            "assessor": self.assessor,
+            "created_at": self.created_at,
+            "version": self.version,
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        """Serializes AssessmentRecord to JSON string."""
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> AssessmentRecord:
+        """Deserializes AssessmentRecord from dictionary."""
+        rel_score = data.get("relevance_score")
+        return cls(
+            paper_id=data.get("paper_id", ""),
+            decision=data.get("decision", "pending"),
+            batch_id=data.get("batch_id"),
+            relevance_score=float(rel_score) if rel_score is not None else None,
+            reason=data.get("reason", ""),
+            evidence=data.get("evidence", ""),
+            assessor=data.get("assessor", "lit-scout"),
+            created_at=data.get("created_at", ""),
+            version=int(data.get("version", 1)),
+        )
+
+    @classmethod
+    def from_json(cls, json_str: str) -> AssessmentRecord:
+        """Deserializes AssessmentRecord from JSON string."""
+        return cls.from_dict(json.loads(json_str))
+
+
+@dataclass
+class SelectionResult:
+    """
+    Structured outcome of the composite ranking and MMR diversity selection pipeline.
+    Conforms to Ticket #42 data contract.
+    """
+
+    batch_id: Optional[str] = None
+    strategy: str = "composite_mmr"
+    requested_n: int = 10
+    selected_papers: List[PaperCandidate] = field(default_factory=list)
+    selected_paper_ids: List[str] = field(default_factory=list)
+    scores: Dict[str, float] = field(default_factory=dict)
+    reasons: Dict[str, str] = field(default_factory=dict)
+    status: str = "completed"
+    created_at: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.created_at:
+            self.created_at = datetime.now(timezone.utc).isoformat()
+        if self.selected_papers and not self.selected_paper_ids:
+            self.selected_paper_ids = [p.paper_id for p in self.selected_papers]
+
+    def __len__(self) -> int:
+        return len(self.selected_papers)
+
+    def __iter__(self):
+        return iter(self.selected_papers)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes SelectionResult to dictionary."""
+        return {
+            "batch_id": self.batch_id,
+            "strategy": self.strategy,
+            "requested_n": self.requested_n,
+            "selected_papers": [p.to_dict() for p in self.selected_papers],
+            "selected_paper_ids": list(self.selected_paper_ids),
+            "scores": dict(self.scores),
+            "reasons": dict(self.reasons),
+            "status": self.status,
+            "created_at": self.created_at,
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        """Serializes SelectionResult to JSON string."""
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> SelectionResult:
+        """Deserializes SelectionResult from dictionary."""
+        raw_papers = data.get("selected_papers") or []
+        selected_papers = [
+            p if isinstance(p, PaperCandidate) else PaperCandidate.from_dict(p)
+            for p in raw_papers
+        ]
+        selected_paper_ids = data.get("selected_paper_ids")
+        if selected_paper_ids is None:
+            selected_paper_ids = [p.paper_id for p in selected_papers]
+        return cls(
+            batch_id=data.get("batch_id"),
+            strategy=data.get("strategy", "composite_mmr"),
+            requested_n=int(data.get("requested_n", 10)),
+            selected_papers=selected_papers,
+            selected_paper_ids=list(selected_paper_ids),
+            scores=dict(data.get("scores") or {}),
+            reasons=dict(data.get("reasons") or {}),
+            status=data.get("status", "completed"),
+            created_at=data.get("created_at", ""),
+        )
+
+    @classmethod
+    def from_json(cls, json_str: str) -> SelectionResult:
+        """Deserializes SelectionResult from JSON string."""
+        return cls.from_dict(json.loads(json_str))
+

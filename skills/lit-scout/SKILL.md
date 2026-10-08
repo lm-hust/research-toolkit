@@ -101,6 +101,16 @@ When expanding an existing Zotero collection:
 uv run python -m research_toolkit.cli expand "<collection-name>" -k <limit> [--target <target-collection>] [--sort topological|composite|citations|recent] [--min-co-cites <N>] [--dry-run]
 ```
 
+#### Pathway C: Structured Assessment & MMR Ranking (`rank`)
+When ranking candidates with composite scoring (50% relevance, 25% log-citations, 15% venue, 10% recency) and MMR author diversity:
+```bash
+# Pipe chaining directly from search
+uv run python -m research_toolkit.cli search "<Tier 1 Query>" -k 20 | uv run python -m research_toolkit.cli rank -n 10
+
+# Ranking an existing batch with structured assessments
+uv run python -m research_toolkit.cli rank --batch <batch_id_or_path> -n 10 [--assessments <assessments.jsonl>] [--topic <slug>]
+```
+
 ### Step 4: Presentation & Execution Modes
 
 #### Mode A: Interactive Preview (Default HITL)
