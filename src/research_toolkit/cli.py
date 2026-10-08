@@ -7,17 +7,33 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+import warnings
 from pathlib import Path
 from typing import Optional
 
 import click
 
 from research_toolkit.discovery.curation import CurationCheckpoint
+from research_toolkit.discovery.models import (
+    AssessmentRecord,
+    PaperCandidate,
+    PaperCandidateBatch,
+    SelectionResult,
+    SnowballResult,
+)
 from research_toolkit.discovery.query import QueryTranslator
+from research_toolkit.discovery.ranker import Ranker
 from research_toolkit.discovery.service import DiscoveryService
+from research_toolkit.discovery.snowballer import (
+    CitationSnowballer,
+    adapt_seeds,
+    load_seeds_from_collection,
+)
 from research_toolkit.synthesis.adapters import get_default_gateway
 from research_toolkit.zotero.manager import ZoteroManager
+from research_toolkit.zotero.models import SyncResult
 
 logger = logging.getLogger(__name__)
 
@@ -95,49 +111,288 @@ def parse_year_range(year_str: Optional[str]) -> Optional[tuple[int, int]]:
         return None
 
 
-@cli.command()
-@click.argument("query")
+def _execute_scout_pipeline(
+    topic_query: str,
+    collection: Optional[str],
+    top_n: int,
+    direction: str,
+    dry_run: bool,
+    as_json: bool,
+    quiet: bool,
+    detail: bool,
+    interactive: Optional[bool] = None,
+    min_cites: int = 0,
+    year: Optional[str] = None,
+    peer_reviewed: bool = False,
+    sort: str = "composite",
+) -> None:
+    """Executes the full literature discovery pipeline: Search -> Rank -> Snowball -> Re-rank -> Curation -> Export."""
+    y_range = parse_year_range(year)
+    effective_topic = topic_query
+    col_name = collection or QueryTranslator.to_collection_name(topic_query)
+
+    if not quiet:
+        click.echo(f"🔭 Starting scout pipeline for topic: '{topic_query}'...", err=True)
+        click.echo(f"   Target collection: '{col_name}'", err=True)
+
+    # 1. Literature Search Atom
+    service = DiscoveryService()
+    search_batch = service.search(
+        query=topic_query,
+        limit=max(top_n * 2, 10),
+        min_cites=min_cites,
+        year_range=y_range,
+        peer_reviewed_only=peer_reviewed,
+    )
+    search_candidates = search_batch.papers
+
+    if not search_candidates:
+        if not quiet:
+            click.echo("No matching papers found in initial search.", err=True)
+        if as_json or not sys.stdout.isatty():
+            click.echo(json.dumps({
+                "collection_key": None,
+                "collection_name": col_name,
+                "selected_count": 0,
+                "created_count": 0,
+                "reused_count": 0,
+                "selected_papers": [],
+                "status": "no_results",
+            }, indent=2))
+        return
+
+    # 2. Initial Ranking & Selection for Snowball Seeds
+    ranker = Ranker()
+    initial_sel = ranker.select(
+        candidates=search_candidates,
+        requested_n=min(len(search_candidates), max(5, top_n)),
+        topic=effective_topic,
+    )
+    seeds = initial_sel.selected_papers if initial_sel.selected_papers else search_candidates[:5]
+
+    # 3. 1-Hop Citation Snowballing
+    if not quiet:
+        click.echo(
+            f"🌱 Snowballing from {len(seeds)} seed papers (direction: {direction})...",
+            err=True,
+        )
+    snowballer = CitationSnowballer()
+    snowball_res = snowballer.snowball(
+        seeds=seeds,
+        direction=direction,
+        max_backward=20,
+        max_forward=20,
+    )
+
+    # 4. Re-Ranking & Stratified MMR Diversity Selection
+    all_pool = list(seeds) + list(snowball_res.discovered_candidates)
+    final_sel = ranker.select(
+        candidates=all_pool,
+        requested_n=top_n,
+        topic=effective_topic,
+    )
+    ranked_candidates = final_sel.selected_papers if final_sel.selected_papers else all_pool[:top_n]
+
+    # 5. Interactive CurationCheckpoint
+    is_interactive = (
+        interactive
+        if interactive is not None
+        else (sys.stdin.isatty() and not as_json and not quiet and not dry_run)
+    )
+    checkpoint = CurationCheckpoint(stream=sys.stderr)
+    curated = checkpoint.review(ranked_candidates, auto_confirm=not is_interactive)
+    if not curated:
+        if not quiet:
+            click.echo("Curation aborted. No papers selected.", err=True)
+        return
+
+    # 6. Export to Zotero
+    if not quiet:
+        click.echo(f"📦 Exporting {len(curated)} papers to Zotero collection '{col_name}'...", err=True)
+
+    zotero_mgr = ZoteroManager()
+    col_obj, sync_res = zotero_mgr.sync_to_collection(
+        col_name,
+        curated,
+        auto_download_oa=not dry_run,
+        dry_run=dry_run,
+    )
+
+    session = load_session()
+    if not dry_run:
+        session["active_collection"] = col_obj.name
+        session["active_collection_key"] = col_obj.key
+        save_session(session)
+
+    if not quiet:
+        table_disp = format_export_table(col_obj.name, col_obj.key, curated, sync_res)
+        click.echo(table_disp, err=True)
+        if dry_run:
+            click.echo(
+                f"[dry-run] Preview: {sync_res.created_count} new, {sync_res.reused_count} existing. No changes committed.",
+                err=True,
+            )
+        else:
+            click.echo(
+                f"✨ Successfully exported {sync_res.total_count} papers to '{col_obj.name}' (Key: {col_obj.key}).",
+                err=True,
+            )
+        if col_obj.web_url:
+            click.echo(f"🔗 Collection URL: {col_obj.web_url}", err=True)
+
+    # Formulate output summary
+    summary_data = {
+        "collection_key": col_obj.key,
+        "collection_name": col_obj.name,
+        "collection_url": col_obj.web_url,
+        "selected_count": len(curated),
+        "created_count": sync_res.created_count,
+        "reused_count": sync_res.reused_count,
+        "total_count": sync_res.total_count,
+        "dry_run": dry_run,
+        "status": "completed",
+    }
+    if detail:
+        summary_data["candidates"] = [c.to_dict() for c in curated]
+
+    if as_json or not sys.stdout.isatty():
+        click.echo(json.dumps(summary_data, indent=2))
+
+
+@cli.command("scout")
+@click.argument("topic", required=False)
 @click.option(
     "--topic",
     "-t",
-    "-c",
-    "--collection",
+    "topic_opt",
     default=None,
-    help="Name of target Zotero collection (default: auto slugified from query).",
+    help="Topic keyword or query expression.",
 )
 @click.option(
-    "--limit",
-    "-k",
-    default=8,
+    "--collection",
+    "-c",
+    default=None,
+    help="Target Zotero collection name or key.",
+)
+@click.option(
+    "--top-n",
+    "-n",
+    default=10,
     type=int,
-    help="Number of top papers to discover and rank (default: 8).",
+    help="Target number of papers (default: 10).",
 )
 @click.option(
-    "--detail",
-    "-d",
+    "--direction",
+    type=click.Choice(["forward", "backward", "both"], case_sensitive=False),
+    default="both",
+    help="Snowballing direction (forward, backward, both, default both).",
+)
+@click.option(
+    "--dry-run",
     is_flag=True,
     default=False,
-    help="Display detailed table of retrieved paper candidates (default: True).",
+    help="Preview candidate discovery and selection without mutating Zotero.",
 )
 @click.option(
     "--json",
     "as_json",
     is_flag=True,
     default=False,
-    help="Output collection info and results as structured JSON.",
+    help="Emits JSON selection and export summary to stdout.",
 )
 @click.option(
-    "--dry-run",
+    "--quiet",
+    "-q",
     is_flag=True,
     default=False,
-    help="Perform discovery and ranking dry-run without writing to Zotero.",
+    help="Suppresses intermediate tables and progress on stderr.",
 )
 @click.option(
-    "--sort",
-    "-s",
-    type=click.Choice(["composite", "citations", "recent", "topological"], case_sensitive=False),
-    default="composite",
-    help="Ranking order: composite (balanced), citations (most cited), recent (newest), topological (most co-cited).",
+    "--detail",
+    "-d",
+    is_flag=True,
+    default=False,
+    help="Includes extended candidate previews in output.",
+)
+@click.option(
+    "--interactive/--non-interactive",
+    default=None,
+    help="Interactive CurationCheckpoint multi-selection (default: auto).",
+)
+@click.option(
+    "--min-cites",
+    default=0,
+    type=int,
+    help="Minimum citation count threshold.",
+)
+@click.option(
+    "--year",
+    "-y",
+    default=None,
+    help="Publication year filter (e.g., 2020-2025, 2023+, or 2024).",
+)
+@click.option(
+    "--peer-reviewed",
+    is_flag=True,
+    default=False,
+    help="Filter out unreviewed preprints (e.g. arXiv).",
+)
+def scout(
+    topic: Optional[str],
+    topic_opt: Optional[str],
+    collection: Optional[str],
+    top_n: int,
+    direction: str,
+    dry_run: bool,
+    as_json: bool,
+    quiet: bool,
+    detail: bool,
+    interactive: Optional[bool],
+    min_cites: int,
+    year: Optional[str],
+    peer_reviewed: bool,
+) -> None:
+    """End-to-end literature discovery pipeline: Search -> Rank -> Snowball -> Re-rank -> Curation -> Export."""
+    effective_topic = topic_opt or topic
+    if not effective_topic:
+        raise click.UsageError("Topic must be provided either as argument or via --topic.")
+
+    _execute_scout_pipeline(
+        topic_query=effective_topic,
+        collection=collection,
+        top_n=top_n,
+        direction=direction,
+        dry_run=dry_run,
+        as_json=as_json,
+        quiet=quiet,
+        detail=detail,
+        interactive=interactive,
+        min_cites=min_cites,
+        year=year,
+        peer_reviewed=peer_reviewed,
+    )
+
+
+@cli.command()
+@click.argument("query")
+@click.option(
+    "--limit",
+    "-k",
+    default=10,
+    type=int,
+    help="Number of candidate papers to discover (default: 10).",
+)
+@click.option(
+    "--topic",
+    "-t",
+    default=None,
+    help="Optional topic identifier or query refinement.",
+)
+@click.option(
+    "--collection",
+    "-c",
+    default=None,
+    help="Legacy option: Target collection (deprecated in search atom).",
 )
 @click.option(
     "--min-cites",
@@ -158,169 +413,775 @@ def parse_year_range(year_str: Optional[str]) -> Optional[tuple[int, int]]:
     help="Filter out unreviewed preprints (e.g. arXiv).",
 )
 @click.option(
-    "--snowball/--no-snowball",
-    default=True,
-    help="Enable 1-hop bidirectional citation snowballing (default: True).",
-)
-@click.option(
-    "--interactive/--non-interactive",
-    "-i/-I",
-    "interactive",
-    default=None,
-    help="Interactive CurationCheckpoint multi-selection (default: auto).",
-)
-@click.option(
-    "--yes",
+    "--json",
+    "as_json",
     is_flag=True,
     default=False,
-    help="Accept all candidates without prompting (alias for --non-interactive).",
+    help="Output machine-readable PaperCandidateBatch JSON to stdout.",
 )
 @click.option(
     "--quiet",
     "-q",
     is_flag=True,
     default=False,
-    help="Suppress table output in terminal.",
+    help="Suppress table and progress output to stderr.",
+)
+@click.option(
+    "--data-dir",
+    default=None,
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Directory to persist candidate batches (default: ./.research/batches).",
+)
+@click.option(
+    "--batch-dir",
+    default=None,
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    help="Directory to persist candidate batches.",
+)
+@click.option(
+    "--batch-id",
+    default=None,
+    help="Explicit ID to assign to the candidate batch.",
+)
+@click.option(
+    "--snowball/--no-snowball",
+    default=False,
+    help="Legacy option: Snowballing is decoupled from the search atom.",
+)
+@click.option(
+    "--detail",
+    "-d",
+    is_flag=True,
+    default=False,
+    help="Legacy option.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Legacy option: search atom is read-only retrieval by default.",
+)
+@click.option(
+    "--sort",
+    "-s",
+    default="composite",
+    help="Ranking order (composite, citations, recent).",
+)
+@click.option(
+    "--auto-sync",
+    is_flag=True,
+    default=False,
+    help="Legacy option: Automatic sync to Zotero.",
 )
 def search(
     query: str,
-    topic: Optional[str],
     limit: int,
-    detail: bool,
-    as_json: bool,
-    dry_run: bool,
-    sort: str,
+    topic: Optional[str],
+    collection: Optional[str],
     min_cites: int,
     year: Optional[str],
     peer_reviewed: bool,
-    snowball: bool,
-    interactive: Optional[bool],
-    yes: bool,
+    as_json: bool,
     quiet: bool,
+    data_dir: Optional[Path],
+    batch_dir: Optional[Path],
+    batch_id: Optional[str],
+    snowball: bool,
+    detail: bool,
+    dry_run: bool,
+    sort: str,
+    auto_sync: bool,
 ) -> None:
-    """Search literature and rank candidates across Semantic Scholar and OpenAlex."""
-    if not as_json and not quiet:
-        click.echo(f"Searching literature for: '{query}'...")
+    """Pure literature retrieval atom across Semantic Scholar and OpenAlex."""
+    # Check for legacy options requiring compatibility shim to scout
+    is_legacy_mode = bool(collection or auto_sync or snowball)
+    if is_legacy_mode:
+        warn_msg = (
+            "DeprecationWarning: Invoking 'search' with legacy workflow options (--collection, "
+            "--snowball, --auto-sync) is deprecated. Use 'research-toolkit scout' instead."
+        )
+        warnings.warn(warn_msg, DeprecationWarning, stacklevel=2)
+        click.echo(f"⚠️  {warn_msg}", err=True)
+
+        _execute_scout_pipeline(
+            topic_query=query,
+            collection=collection,
+            top_n=limit,
+            direction="both",
+            dry_run=dry_run,
+            as_json=as_json,
+            quiet=quiet,
+            detail=detail,
+            min_cites=min_cites,
+            year=year,
+            peer_reviewed=peer_reviewed,
+            sort=sort,
+        )
+        return
+
+    if not quiet:
+        click.echo(f"Searching literature for: '{query}'...", err=True)
 
     y_range = parse_year_range(year)
+    effective_topic = topic or query
     service = DiscoveryService()
-    candidates = service.search_and_rank(
-        query,
-        top_k=limit,
-        sort_by=sort,
+    batch = service.search(
+        query=query,
+        limit=limit,
         min_cites=min_cites,
         year_range=y_range,
         peer_reviewed_only=peer_reviewed,
-        snowball=snowball,
+        batch_id=batch_id,
     )
 
-    if not candidates:
-        if as_json:
-            click.echo(json.dumps({"status": "no_results", "query": query, "count": 0}))
-        else:
-            click.echo("No matching papers found.")
-        return
+    # Persist batch file atomically
+    target_dir = batch_dir or data_dir
+    saved_path = batch.save(directory=target_dir)
 
-    # Derive canonical ZoteroCollection name
-    col_name = QueryTranslator.to_collection_name(query, topic)
-
-    # Interactive CurationCheckpoint
-    is_interactive = (
-        False
-        if (yes or interactive is False)
-        else (
-            True
-            if interactive is True
-            else (sys.stdin.isatty() and not dry_run and not as_json and not quiet)
-        )
+    # Persist session state
+    save_session(
+        {
+            "active_batch": batch.batch_id,
+            "active_batch_file": str(saved_path),
+            "topic": effective_topic,
+        }
     )
-    if not as_json and not quiet:
-        if is_interactive:
-            checkpoint = CurationCheckpoint()
-            candidates = checkpoint.review(candidates, interactive=True)
-            if not candidates:
-                click.echo("CurationCheckpoint aborted. No papers were committed.")
-                return
-        else:
-            table_output = service.format_table(candidates)
-            click.echo(table_output)
 
-    if dry_run:
-        if as_json:
-            payload = {
-                "dry_run": True,
-                "collection_name": col_name,
-                "query": query,
-                "count": len(candidates),
-            }
-            if detail:
-                payload["candidates"] = [
-                    {
-                        "paper_id": c.paper_id,
-                        "title": c.title,
-                        "year": c.year,
-                        "venue": c.venue,
-                        "doi": c.doi,
-                        "composite_score": c.composite_score,
-                    }
-                    for c in candidates
-                ]
-            click.echo(json.dumps(payload, indent=2))
-        else:
+    # Route Rich table and progress info to stderr
+    if not quiet:
+        if batch.papers:
+            table_output = service.format_table(batch.papers)
+            click.echo(table_output, err=True)
             click.echo(
-                f"\n[dry-run] Discovered and ranked {len(candidates)} papers. No changes committed."
-            )
-        return
-
-    # Mandatory Zotero insertion
-    try:
-        zotero_mgr = ZoteroManager()
-        collection, created = zotero_mgr.sync_to_collection(col_name, candidates)
-    except ValueError as e:
-        if as_json:
-            click.echo(
-                json.dumps({"status": "error", "error_type": "auth_missing", "message": str(e)}),
+                f"Persisted batch '{batch.batch_id}' ({len(batch.papers)} papers) to {saved_path}",
                 err=True,
             )
         else:
-            click.echo(f"\n⚠️  Zotero 配置错误: {e}", err=True)
-            click.echo("💡 提示: 若需本地预览文献检索与排序，可使用 `--dry-run`；若需入库，请在 .env 中配置 ZOTERO_USER_ID 与 ZOTERO_API_KEY。", err=True)
-        sys.exit(1)
+            click.echo("No matching papers found.", err=True)
 
-    save_session(
-        {
-            "active_collection": col_name,
-            "topic": query,
-            "collection_key": collection.key,
-            "collection_url": collection.web_url,
-        }
+    # Route pure JSON to stdout when piped (non-tty) or when --json is specified
+    is_piped = not sys.stdout.isatty()
+    if as_json or is_piped:
+        click.echo(batch.to_json(indent=2))
+
+
+def resolve_batch_path(val: str) -> Path:
+    """Resolves a batch ID or file path to an existing Path, or raises click.BadParameter."""
+    p = Path(val)
+    if p.is_file():
+        return p
+
+    search_paths = [
+        Path.cwd() / ".research" / "batches" / f"{val}.json",
+        Path.cwd() / ".research" / "batches" / val,
+    ]
+    batch_dir = os.getenv("RESEARCH_BATCH_DIR") or os.getenv("RESEARCH_DATA_DIR")
+    if batch_dir:
+        search_paths.extend([
+            Path(batch_dir) / f"{val}.json",
+            Path(batch_dir) / val,
+        ])
+    for sp in search_paths:
+        if sp.is_file():
+            return sp
+
+    raise click.BadParameter(f"Batch file or ID '{val}' not found.")
+
+
+def load_candidate_batch(val: str) -> PaperCandidateBatch:
+    """Loads a PaperCandidateBatch from a file path or resolves a batch ID."""
+    p = resolve_batch_path(val)
+    return PaperCandidateBatch.load(p)
+
+
+def load_assessment_records(val: str) -> list[AssessmentRecord]:
+    """Loads AssessmentRecords from a JSONL or JSON file, or inline text."""
+    p = Path(val)
+    if p.is_file():
+        content = p.read_text(encoding="utf-8").strip()
+    else:
+        content = val.strip()
+
+    if not content:
+        return []
+
+    # JSON array format
+    if content.startswith("[") and content.endswith("]"):
+        try:
+            arr = json.loads(content)
+            return [AssessmentRecord.from_dict(item) for item in arr]
+        except Exception:
+            pass
+
+    # JSONL format (one object per line)
+    records: list[AssessmentRecord] = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            records.append(AssessmentRecord.from_json(line))
+        except Exception as e:
+            logger.warning("Could not parse assessment record line: %s (%s)", line, e)
+    return records
+
+
+def format_selection_table(result: SelectionResult, ranker: Ranker) -> str:
+    """Formats top selected candidates and diagnostic score breakdowns into a Rich terminal table."""
+    if not result.selected_papers:
+        return "No candidates selected."
+
+    try:
+        import io
+
+        from rich.console import Console
+        from rich.table import Table
+
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=False, color_system=None, width=120)
+        table = Table(
+            title=f"Top Selected Literature Candidates (MMR Diversity Ranking, N={len(result.selected_papers)})",
+            show_header=True,
+            header_style="bold",
+        )
+        table.add_column("Rank", justify="right", style="cyan", width=5)
+        table.add_column("Type", justify="center", width=6)
+        table.add_column("Title", style="bold", min_width=30)
+        table.add_column("Author", min_width=12)
+        table.add_column("Year", justify="center", width=6)
+        table.add_column("Cites", justify="right", width=7)
+        table.add_column("Score", justify="right", width=7)
+        table.add_column("Breakdown (rel/cite/ven/rec)", min_width=25)
+        table.add_column("DOI / Identifier", min_width=20)
+
+        for idx, p in enumerate(result.selected_papers, start=1):
+            if p.is_review:
+                doc_type = "[REV]"
+            elif p.is_preprint:
+                doc_type = "[PRE]"
+            else:
+                doc_type = "[RES]"
+
+            first_author = p.authors[0] if p.authors else "-"
+            if len(first_author) > 15:
+                first_author = first_author[:13] + ".."
+
+            score = result.scores.get(p.paper_id, p.composite_score)
+            bd = ranker.score_breakdown(p)
+            bd_str = f"r:{bd['s_rel']:.2f} c:{bd['s_cite']:.2f} v:{bd['s_venue']:.2f} y:{bd['s_recency']:.2f}"
+            title_disp = (p.title[:45] + "...") if len(p.title) > 48 else p.title
+            doi_disp = p.doi or p.arxiv_id or p.paper_id
+
+            table.add_row(
+                str(idx),
+                doc_type,
+                title_disp,
+                first_author,
+                str(p.year or "-"),
+                str(p.citation_count),
+                f"{score:.3f}",
+                bd_str,
+                doi_disp,
+            )
+
+        console.print(table)
+        return buf.getvalue()
+    except ImportError:
+        return f"Selected {len(result.selected_papers)} papers."
+
+
+@cli.command("rank")
+@click.option(
+    "--batch",
+    "-b",
+    default=None,
+    help="Candidate batch ID or file path to evaluate.",
+)
+@click.option(
+    "--assessments",
+    "-a",
+    default=None,
+    help="Path to structured AssessmentRecords JSONL or JSON file.",
+)
+@click.option(
+    "--topic",
+    "-t",
+    default=None,
+    help="Topic identifier or query text (defaults to batch topic).",
+)
+@click.option(
+    "--top-n",
+    "-n",
+    default=10,
+    type=int,
+    help="Number of top candidates to select (default: 10).",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress Rich table and progress diagnostics on stderr.",
+)
+def rank(
+    batch: Optional[str],
+    assessments: Optional[str],
+    topic: Optional[str],
+    top_n: int,
+    quiet: bool,
+) -> None:
+    """Ranks candidate papers with composite scoring and MMR diversity selection."""
+    batch_obj: Optional[PaperCandidateBatch] = None
+    if batch:
+        batch_obj = load_candidate_batch(batch)
+    else:
+        stdin_stream = sys.stdin
+        if not stdin_stream.isatty():
+            stdin_data = stdin_stream.read().strip()
+            if stdin_data:
+                batch_obj = PaperCandidateBatch.from_json(stdin_data)
+        if batch_obj is None:
+            session = load_session()
+            active_file = session.get("active_batch_file")
+            if active_file and Path(active_file).is_file():
+                batch_obj = PaperCandidateBatch.load(active_file)
+            else:
+                raise click.UsageError(
+                    "Candidate batch must be provided via stdin JSON stream or --batch <path_or_id>."
+                )
+
+    assessment_records = (
+        load_assessment_records(assessments) if assessments else None
+    )
+    effective_topic = topic or batch_obj.topic or batch_obj.query
+
+    ranker = Ranker()
+    result = ranker.select(
+        candidates=batch_obj.papers,
+        requested_n=top_n,
+        assessments=assessment_records,
+        batch_id=batch_obj.batch_id,
+        topic=effective_topic,
     )
 
-    if as_json:
-        payload = {
-            "collection_id": collection.key,
-            "collection_url": collection.web_url,
-            "collection_name": col_name,
-            "count": len(created),
-            "created_count": getattr(created, "created_count", len(created)),
-            "reused_count": getattr(created, "reused_count", 0),
-        }
-        if detail:
-            payload["candidates"] = [
-                {
-                    "paper_id": c.paper_id,
-                    "title": c.title,
-                    "year": c.year,
-                    "venue": c.venue,
-                    "doi": c.doi,
-                    "composite_score": c.composite_score,
-                }
-                for c in candidates
-            ]
-        click.echo(json.dumps(payload, indent=2))
+    if not quiet:
+        if result.selected_papers:
+            table_disp = format_selection_table(result, ranker)
+            click.echo(table_disp, err=True)
+            click.echo(
+                f"Selected {len(result.selected_papers)}/{top_n} candidates (strategy: {result.strategy}, status: {result.status})",
+                err=True,
+            )
+        else:
+            click.echo("No eligible candidates found.", err=True)
+
+    click.echo(result.to_json(indent=2))
+
+
+def format_snowball_table(result: SnowballResult) -> str:
+    """Formats discovered candidates into a Rich table for terminal output on stderr."""
+    try:
+        from io import StringIO
+
+        from rich.console import Console
+        from rich.table import Table
+
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True)
+        table = Table(
+            title=f"Snowball Discovered Candidates (Direction: {result.direction}, Status: {result.status})",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Type", width=7)
+        table.add_column("Role", width=14)
+        table.add_column("Title", style="bold", min_width=30, max_width=50)
+        table.add_column("Author", width=15)
+        table.add_column("Year", width=6)
+        table.add_column("Cites", justify="right", width=7)
+        table.add_column("Co-Cites", justify="right", width=8)
+        table.add_column("DOI / ID", style="dim", width=24)
+
+        for idx, p in enumerate(result.discovered_candidates, 1):
+            if p.is_review:
+                doc_type = "[REV]"
+            elif p.is_preprint:
+                doc_type = "[PRE]"
+            else:
+                doc_type = "[RES]"
+
+            role_badge = f"[{p.topological_role}]" if p.topological_role else "-"
+            first_author = p.authors[0] if p.authors else "-"
+            if len(first_author) > 15:
+                first_author = first_author[:13] + ".."
+
+            title_disp = (p.title[:47] + "...") if len(p.title) > 50 else p.title
+            doi_disp = p.doi or p.arxiv_id or p.paper_id
+            if len(doi_disp) > 24:
+                doi_disp = doi_disp[:22] + ".."
+
+            table.add_row(
+                str(idx),
+                doc_type,
+                role_badge,
+                title_disp,
+                first_author,
+                str(p.year or "-"),
+                str(p.citation_count),
+                str(p.co_citation_count),
+                doi_disp,
+            )
+
+        console.print(table)
+        return buf.getvalue()
+    except ImportError:
+        return f"Discovered {len(result.discovered_candidates)} candidates."
+
+
+@cli.command("snowball")
+@click.option(
+    "--batch",
+    "-b",
+    default=None,
+    help="Candidate batch ID or file path to evaluate as seeds.",
+)
+@click.option(
+    "--seeds",
+    "-s",
+    default=None,
+    help="Comma-separated DOIs or platform IDs to use as seeds.",
+)
+@click.option(
+    "--from-collection",
+    "-c",
+    default=None,
+    help="Existing Zotero collection name or key to load seeds from.",
+)
+@click.option(
+    "--direction",
+    type=click.Choice(["forward", "backward", "both"], case_sensitive=False),
+    default="both",
+    help="Expansion direction: forward, backward, or both (default: both).",
+)
+@click.option(
+    "--max-backward",
+    default=20,
+    type=int,
+    help="Maximum backward references to expand (default: 20).",
+)
+@click.option(
+    "--max-forward",
+    default=20,
+    type=int,
+    help="Maximum forward citations to expand (default: 20).",
+)
+@click.option(
+    "--min-co-cites",
+    default=1,
+    type=int,
+    help="Minimum co-citation threshold (default: 1).",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress Rich table and progress diagnostics on stderr.",
+)
+def snowball(
+    batch: Optional[str],
+    seeds: Optional[str],
+    from_collection: Optional[str],
+    direction: str,
+    max_backward: int,
+    max_forward: int,
+    min_co_cites: int,
+    quiet: bool,
+) -> None:
+    """Executes 1-hop bidirectional citation expansion from multi-source seeds."""
+    seed_candidates: list[PaperCandidate] = []
+
+    if seeds:
+        seed_candidates = adapt_seeds(seeds)
+    elif from_collection:
+        seed_candidates = load_seeds_from_collection(from_collection)
+    elif batch:
+        batch_obj = load_candidate_batch(batch)
+        seed_candidates = batch_obj.papers
     else:
-        click.echo(f"ID: {collection.key}")
-        click.echo(f"URL: {collection.web_url}")
+        stdin_stream = sys.stdin
+        if not stdin_stream.isatty():
+            stdin_data = stdin_stream.read().strip()
+            if stdin_data:
+                try:
+                    data = json.loads(stdin_data)
+                    seed_candidates = adapt_seeds(data)
+                except Exception as e:
+                    raise click.UsageError(f"Failed to parse seeds from stdin JSON: {e}")
+        if not seed_candidates:
+            session = load_session()
+            active_file = session.get("active_batch_file")
+            if active_file and Path(active_file).is_file():
+                batch_obj = PaperCandidateBatch.load(active_file)
+                seed_candidates = batch_obj.papers
+            elif session.get("active_collection"):
+                seed_candidates = load_seeds_from_collection(session["active_collection"])
+            else:
+                raise click.UsageError(
+                    "Seed papers must be provided via stdin JSON stream, --batch, --seeds, or --from-collection."
+                )
+
+    if not quiet:
+        click.echo(
+            f"Ingested {len(seed_candidates)} seed papers. Executing 1-hop {direction} citation expansion...",
+            err=True,
+        )
+
+    snowballer = CitationSnowballer()
+    result = snowballer.snowball(
+        seeds=seed_candidates,
+        direction=direction,
+        max_backward=max_backward,
+        max_forward=max_forward,
+        min_co_citations=min_co_cites,
+    )
+
+    if not quiet:
+        if result.discovered_candidates:
+            table_disp = format_snowball_table(result)
+            click.echo(table_disp, err=True)
+            click.echo(
+                f"Discovered {len(result.discovered_candidates)} candidates ({len(result.foundational)} foundational, {len(result.recent_advancements)} recent advancements) across {len(result.seeds)} seeds.",
+                err=True,
+            )
+        else:
+            click.echo("No candidates discovered within budget.", err=True)
+
+    click.echo(result.to_json(indent=2))
+
+
+def parse_export_payload(
+    raw_json: str,
+) -> tuple[list[PaperCandidate], Optional[str], Optional[str]]:
+    """
+    Parses a JSON string representing SelectionResult or PaperCandidateBatch.
+    Returns (candidates, batch_id, topic).
+    """
+    data = json.loads(raw_json)
+    if isinstance(data, dict):
+        if "selected_papers" in data:
+            sel = SelectionResult.from_dict(data)
+            return sel.selected_papers, sel.batch_id, None
+        elif "papers" in data:
+            batch = PaperCandidateBatch.from_dict(data)
+            return batch.papers, batch.batch_id, batch.topic or batch.query
+        else:
+            raise click.BadParameter(
+                "JSON payload must contain 'selected_papers' or 'papers'."
+            )
+    elif isinstance(data, list):
+        papers = [
+            p if isinstance(p, PaperCandidate) else PaperCandidate.from_dict(p)
+            for p in data
+        ]
+        return papers, None, None
+    raise click.BadParameter("Invalid JSON payload structure.")
+
+
+def load_export_batch(
+    val: str,
+) -> tuple[list[PaperCandidate], Optional[str], Optional[str]]:
+    """Loads SelectionResult or PaperCandidateBatch from file path or batch ID."""
+    p = resolve_batch_path(val)
+    content = p.read_text(encoding="utf-8")
+    return parse_export_payload(content)
+
+
+def format_export_table(
+    collection_name: str,
+    collection_key: str,
+    candidates: list[PaperCandidate],
+    sync_result: SyncResult,
+) -> str:
+    """Formats exported candidates and collection sync summary into a Rich terminal table."""
+    if not candidates:
+        return f"No candidate papers to export for collection '{collection_name}'."
+
+    try:
+        import io
+
+        from rich.console import Console
+        from rich.table import Table
+
+        from research_toolkit.discovery.dedup import Deduplicator
+
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=False, color_system=None, width=120)
+        table = Table(
+            title=f"Zotero Library Export: '{collection_name}' (Key: {collection_key}, Total: {len(candidates)})",
+            show_header=True,
+            header_style="bold",
+        )
+        table.add_column("#", justify="right", style="cyan", width=4)
+        table.add_column("Status", justify="center", width=10)
+        table.add_column("Type", justify="center", width=6)
+        table.add_column("Title", style="bold", min_width=35)
+        table.add_column("Author", min_width=12)
+        table.add_column("Year", justify="center", width=6)
+        table.add_column("DOI / Identifier", min_width=20)
+
+        # Index existing/reused items by DOI or title
+        reused_dois = set()
+        reused_titles = set()
+        for r_item in sync_result.reused_items:
+            r_data = r_item.get("data", {}) if isinstance(r_item, dict) else {}
+            r_doi = Deduplicator.clean_doi(r_data.get("DOI"))
+            if r_doi:
+                reused_dois.add(r_doi)
+            r_t = Deduplicator.clean_title(r_data.get("title", ""))
+            if r_t:
+                reused_titles.add(r_t)
+
+        for idx, p in enumerate(candidates, start=1):
+            if p.is_review:
+                doc_type = "[REV]"
+            elif p.is_preprint:
+                doc_type = "[PRE]"
+            else:
+                doc_type = "[RES]"
+
+            first_author = p.authors[0] if p.authors else "-"
+            if len(first_author) > 15:
+                first_author = first_author[:13] + ".."
+
+            title_disp = (p.title[:45] + "...") if len(p.title) > 48 else p.title
+            doi_disp = p.doi or p.arxiv_id or p.paper_id or "-"
+
+            p_doi = Deduplicator.clean_doi(p.doi) if p.doi else ""
+            p_title = Deduplicator.clean_title(p.title) if p.title else ""
+            is_reused = (p_doi and p_doi in reused_dois) or (
+                not p_doi and p_title and p_title in reused_titles
+            )
+            status_tag = "[REUSED]" if is_reused else "[CREATED]"
+
+            table.add_row(
+                str(idx),
+                status_tag,
+                doc_type,
+                title_disp,
+                first_author,
+                str(p.year or "-"),
+                doi_disp,
+            )
+
+        console.print(table)
+        return buf.getvalue()
+    except ImportError:
+        return f"Exported {len(candidates)} papers to '{collection_name}'."
+
+
+@cli.command("export")
+@click.option(
+    "--batch",
+    "-b",
+    default=None,
+    help="Candidate batch or selection result ID or file path.",
+)
+@click.option(
+    "--collection",
+    "-c",
+    default=None,
+    help="Target Zotero collection name or key. Defaults to active collection in session.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview export without modifying Zotero personal library.",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress table and progress output to stderr.",
+)
+def export(
+    batch: Optional[str],
+    collection: Optional[str],
+    dry_run: bool,
+    quiet: bool,
+) -> None:
+    """Exports literature candidates to personal Zotero library collection."""
+    candidates: list[PaperCandidate] = []
+    batch_id: Optional[str] = None
+    topic: Optional[str] = None
+
+    if batch:
+        candidates, batch_id, topic = load_export_batch(batch)
+    else:
+        stdin_stream = sys.stdin
+        stdin_data = ""
+        if not stdin_stream.isatty():
+            stdin_data = stdin_stream.read().strip()
+        if stdin_data:
+            candidates, batch_id, topic = parse_export_payload(stdin_data)
+        else:
+            session = load_session()
+            active_file = session.get("active_batch_file")
+            if active_file and Path(active_file).is_file():
+                candidates, batch_id, topic = load_export_batch(active_file)
+            else:
+                raise click.UsageError(
+                    "Candidate batch or selection result must be provided via stdin JSON stream or --batch <path_or_id>."
+                )
+
+    session = load_session()
+    target_col = collection or session.get("active_collection")
+    if not target_col:
+        raise click.UsageError(
+            "No target collection specified. Provide --collection <name_or_key> or set active collection in session."
+        )
+
+    if not quiet:
+        click.echo(
+            f"Exporting {len(candidates)} papers to Zotero collection '{target_col}'...",
+            err=True,
+        )
+
+    zotero_mgr = ZoteroManager()
+    col_obj, sync_res = zotero_mgr.sync_to_collection(
+        target_col,
+        candidates,
+        auto_download_oa=not dry_run,
+        dry_run=dry_run,
+    )
+
+    if not dry_run:
+        session["active_collection"] = col_obj.name
+        session["active_collection_key"] = col_obj.key
+        save_session(session)
+
+    if not quiet:
+        table_disp = format_export_table(col_obj.name, col_obj.key, candidates, sync_res)
+        click.echo(table_disp, err=True)
+        if dry_run:
+            click.echo(
+                f"[dry-run] Preview: {sync_res.created_count} new, {sync_res.reused_count} existing. No changes committed.",
+                err=True,
+            )
+        else:
+            click.echo(
+                f"✨ Successfully exported {sync_res.total_count} papers to '{col_obj.name}' (Key: {col_obj.key}).",
+                err=True,
+            )
+        if col_obj.web_url:
+            click.echo(f"🔗 Collection URL: {col_obj.web_url}", err=True)
+
+    summary = sync_res.to_dict()
+    summary["dry_run"] = dry_run
+    click.echo(json.dumps(summary, indent=2))
 
 
 @cli.command("expand")

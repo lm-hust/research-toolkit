@@ -5,8 +5,10 @@ Review standards for research-toolkit changes. Enforced during code review.
 ## Architecture & Seams
 
 - **Deep API Clients**: Client classes (e.g., `ZoteroClient`) must be deep modules with narrow, expressive interfaces. They must accept domain models or complete entity dictionaries directly rather than forcing higher-level managers (`ZoteroManager`) to unpack wire payload fields (eliminates Feature Envy).
+- **Private Member Encapsulation**: Strictly prohibit external access to private methods or attributes (leading `_`) across modules. Enforced mechanically via Ruff rule `SLF001`.
 - **Unified Request Channel**: All outbound HTTP requests within a client must route through its unified request method (`_request`), ensuring centralized authentication, user agent tagging, header construction, and structured error handling.
 - **Aggregator Resilience**: Public search engines (Semantic Scholar, OpenAlex) are prone to rate limits (HTTP 429) and bursts. Calls to external sources must degrade gracefully (warn and continue with available providers) rather than terminating the entire pipeline.
+- **Mathematical Specification Precision**: Algorithmic rules for composite ranking, recency decay, and diversity penalties must specify exact piecewise mathematical definitions to prevent interpretation drift.
 
 ## Zotero Domain Invariants
 

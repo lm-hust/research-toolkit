@@ -9,7 +9,11 @@ import difflib
 import re
 from typing import Dict, List, Optional, Tuple
 
-from research_toolkit.discovery.models import PaperCandidate
+from research_toolkit.discovery.models import (
+    PaperCandidate,
+    clean_arxiv,
+    clean_doi,
+)
 
 
 class Deduplicator:
@@ -23,21 +27,11 @@ class Deduplicator:
 
     @staticmethod
     def clean_doi(doi: Optional[str]) -> Optional[str]:
-        if not doi:
-            return None
-        d = doi.lower().strip()
-        d = re.sub(r"^https?://(dx\.)?doi\.org/", "", d)
-        d = re.sub(r"^doi:", "", d)
-        return d.strip("/")
+        return clean_doi(doi)
 
     @staticmethod
     def clean_arxiv(aid: Optional[str]) -> Optional[str]:
-        if not aid:
-            return None
-        a = aid.lower().strip()
-        a = re.sub(r"^arxiv:", "", a)
-        a = re.sub(r"v\d+$", "", a)
-        return a.strip()
+        return clean_arxiv(aid)
 
     @staticmethod
     def clean_title(title: str) -> str:
@@ -66,12 +60,23 @@ class Deduplicator:
             existing.venue_impact = incoming.venue_impact
             existing.venue = incoming.venue
 
+        # Preserve platform original IDs
+        if incoming.source_platform == "semantic_scholar" and "s2_id" not in existing.external_ids:
+            if incoming.paper_id and not incoming.paper_id.startswith(("doi:", "hash:")):
+                existing.external_ids["s2_id"] = incoming.paper_id
+        elif incoming.source_platform == "openalex" and "openalex_id" not in existing.external_ids:
+            if incoming.paper_id and not incoming.paper_id.startswith(("doi:", "hash:")):
+                existing.external_ids["openalex_id"] = incoming.paper_id
+
         # Merge external IDs
         existing.external_ids.update(incoming.external_ids)
         if not existing.doi and incoming.doi:
             existing.doi = self.clean_doi(incoming.doi)
         if not existing.arxiv_id and incoming.arxiv_id:
             existing.arxiv_id = self.clean_arxiv(incoming.arxiv_id)
+
+        # Update canonical primary identity
+        existing.paper_id = existing.compute_primary_id()
 
         # Merge authors
         if len(incoming.authors) > len(existing.authors):
@@ -91,6 +96,14 @@ class Deduplicator:
         results: List[PaperCandidate] = []
 
         for candidate in candidates:
+            # Preserve original platform ID in external_ids if not canonical
+            if candidate.source_platform == "semantic_scholar" and "s2_id" not in candidate.external_ids:
+                if candidate.paper_id and not candidate.paper_id.startswith(("doi:", "hash:")):
+                    candidate.external_ids["s2_id"] = candidate.paper_id
+            elif candidate.source_platform == "openalex" and "openalex_id" not in candidate.external_ids:
+                if candidate.paper_id and not candidate.paper_id.startswith(("doi:", "hash:")):
+                    candidate.external_ids["openalex_id"] = candidate.paper_id
+
             c_doi = self.clean_doi(candidate.doi)
             c_arxiv = self.clean_arxiv(candidate.arxiv_id)
             c_norm_title = self.clean_title(candidate.title)
@@ -123,6 +136,7 @@ class Deduplicator:
             if matched:
                 self.merge_records(matched, candidate)
             else:
+                candidate.paper_id = candidate.compute_primary_id()
                 if c_doi:
                     self.doi_map[c_doi] = candidate
                 if c_arxiv:

@@ -80,6 +80,16 @@ class TestDeduplicator(unittest.TestCase):
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0].citation_count, 160000)
 
+    def test_clean_doi_and_clean_arxiv_delegation(self):
+        """Verifies Deduplicator delegates clean_doi and clean_arxiv."""
+        self.assertEqual(Deduplicator.clean_doi("doi:10.1000/182"), "10.1000/182")
+        self.assertEqual(Deduplicator.clean_doi("https://doi.org/10.1000/182/"), "10.1000/182")
+        self.assertIsNone(Deduplicator.clean_doi(""))
+
+        self.assertEqual(Deduplicator.clean_arxiv("arXiv:2005.14165v4"), "2005.14165")
+        self.assertEqual(Deduplicator.clean_arxiv("2005.14165"), "2005.14165")
+        self.assertIsNone(Deduplicator.clean_arxiv(""))
+
 
 if __name__ == "__main__":
     unittest.main()
