@@ -58,6 +58,8 @@ When invoked, the agent executes four sequential steps:
 Analyze the user's input to determine the execution pathway:
 - **Pathway A (Topic / Keyword Discovery)**: User supplies informal text, keywords, questions, or themes. -> Use `search`.
 - **Pathway B (Seed Collection Snowballing)**: User references an existing Zotero collection of seed papers to expand. -> Use `expand`.
+- **Pathway C (Structured Assessment & MMR Ranking)**: User ranks candidate batches or evaluates relevance. -> Use `rank`.
+- **Pathway D (Library Persistence & Export)**: User exports selected candidates or candidate batches to Zotero collection. -> Use `export`.
 
 **Intent-to-Flag Mapping Table**:
 | User Intent / Natural Language Clue | CLI Flag | Default / Fallback |
@@ -109,6 +111,16 @@ uv run python -m research_toolkit.cli search "<Tier 1 Query>" -k 20 | uv run pyt
 
 # Ranking an existing batch with structured assessments
 uv run python -m research_toolkit.cli rank --batch <batch_id_or_path> -n 10 [--assessments <assessments.jsonl>] [--topic <slug>]
+```
+
+#### Pathway D: Literature Export & Zotero Ingestion (`export`)
+When persisting candidate literature (`SelectionResult` or `PaperCandidateBatch`) to a target Zotero collection:
+```bash
+# Composable UNIX pipeline chaining: search -> rank -> export
+uv run python -m research_toolkit.cli search "<Tier 1 Query>" -k 20 | uv run python -m research_toolkit.cli rank -n 10 | uv run python -m research_toolkit.cli export --collection "<collection-name>"
+
+# Export from an existing candidate batch or selection file
+uv run python -m research_toolkit.cli export --batch <batch_id_or_path> --collection "<collection-name>" [--dry-run] [--quiet]
 ```
 
 ### Step 4: Presentation & Execution Modes
