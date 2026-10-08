@@ -20,9 +20,15 @@ from research_toolkit.discovery.models import (
     PaperCandidate,
     PaperCandidateBatch,
     SelectionResult,
+    SnowballResult,
 )
 from research_toolkit.discovery.ranker import Ranker
 from research_toolkit.discovery.service import DiscoveryService
+from research_toolkit.discovery.snowballer import (
+    CitationSnowballer,
+    adapt_seeds,
+    load_seeds_from_collection,
+)
 from research_toolkit.synthesis.adapters import get_default_gateway
 from research_toolkit.zotero.manager import ZoteroManager
 from research_toolkit.zotero.models import SyncResult
@@ -465,6 +471,189 @@ def rank(
             )
         else:
             click.echo("No eligible candidates found.", err=True)
+
+    click.echo(result.to_json(indent=2))
+
+
+def format_snowball_table(result: SnowballResult) -> str:
+    """Formats discovered candidates into a Rich table for terminal output on stderr."""
+    try:
+        from io import StringIO
+
+        from rich.console import Console
+        from rich.table import Table
+
+        buf = StringIO()
+        console = Console(file=buf, force_terminal=True)
+        table = Table(
+            title=f"Snowball Discovered Candidates (Direction: {result.direction}, Status: {result.status})",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Type", width=7)
+        table.add_column("Role", width=14)
+        table.add_column("Title", style="bold", min_width=30, max_width=50)
+        table.add_column("Author", width=15)
+        table.add_column("Year", width=6)
+        table.add_column("Cites", justify="right", width=7)
+        table.add_column("Co-Cites", justify="right", width=8)
+        table.add_column("DOI / ID", style="dim", width=24)
+
+        for idx, p in enumerate(result.discovered_candidates, 1):
+            if p.is_review:
+                doc_type = "[REV]"
+            elif p.is_preprint:
+                doc_type = "[PRE]"
+            else:
+                doc_type = "[RES]"
+
+            role_badge = f"[{p.topological_role}]" if p.topological_role else "-"
+            first_author = p.authors[0] if p.authors else "-"
+            if len(first_author) > 15:
+                first_author = first_author[:13] + ".."
+
+            title_disp = (p.title[:47] + "...") if len(p.title) > 50 else p.title
+            doi_disp = p.doi or p.arxiv_id or p.paper_id
+            if len(doi_disp) > 24:
+                doi_disp = doi_disp[:22] + ".."
+
+            table.add_row(
+                str(idx),
+                doc_type,
+                role_badge,
+                title_disp,
+                first_author,
+                str(p.year or "-"),
+                str(p.citation_count),
+                str(p.co_citation_count),
+                doi_disp,
+            )
+
+        console.print(table)
+        return buf.getvalue()
+    except ImportError:
+        return f"Discovered {len(result.discovered_candidates)} candidates."
+
+
+@cli.command("snowball")
+@click.option(
+    "--batch",
+    "-b",
+    default=None,
+    help="Candidate batch ID or file path to evaluate as seeds.",
+)
+@click.option(
+    "--seeds",
+    "-s",
+    default=None,
+    help="Comma-separated DOIs or platform IDs to use as seeds.",
+)
+@click.option(
+    "--from-collection",
+    "-c",
+    default=None,
+    help="Existing Zotero collection name or key to load seeds from.",
+)
+@click.option(
+    "--direction",
+    type=click.Choice(["forward", "backward", "both"], case_sensitive=False),
+    default="both",
+    help="Expansion direction: forward, backward, or both (default: both).",
+)
+@click.option(
+    "--max-backward",
+    default=20,
+    type=int,
+    help="Maximum backward references to expand (default: 20).",
+)
+@click.option(
+    "--max-forward",
+    default=20,
+    type=int,
+    help="Maximum forward citations to expand (default: 20).",
+)
+@click.option(
+    "--min-co-cites",
+    default=1,
+    type=int,
+    help="Minimum co-citation threshold (default: 1).",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    default=False,
+    help="Suppress Rich table and progress diagnostics on stderr.",
+)
+def snowball(
+    batch: Optional[str],
+    seeds: Optional[str],
+    from_collection: Optional[str],
+    direction: str,
+    max_backward: int,
+    max_forward: int,
+    min_co_cites: int,
+    quiet: bool,
+) -> None:
+    """Executes 1-hop bidirectional citation expansion from multi-source seeds."""
+    seed_candidates: list[PaperCandidate] = []
+
+    if seeds:
+        seed_candidates = adapt_seeds(seeds)
+    elif from_collection:
+        seed_candidates = load_seeds_from_collection(from_collection)
+    elif batch:
+        batch_obj = load_candidate_batch(batch)
+        seed_candidates = batch_obj.papers
+    else:
+        stdin_stream = sys.stdin
+        if not stdin_stream.isatty():
+            stdin_data = stdin_stream.read().strip()
+            if stdin_data:
+                try:
+                    data = json.loads(stdin_data)
+                    seed_candidates = adapt_seeds(data)
+                except Exception as e:
+                    raise click.UsageError(f"Failed to parse seeds from stdin JSON: {e}")
+        if not seed_candidates:
+            session = load_session()
+            active_file = session.get("active_batch_file")
+            if active_file and Path(active_file).is_file():
+                batch_obj = PaperCandidateBatch.load(active_file)
+                seed_candidates = batch_obj.papers
+            elif session.get("active_collection"):
+                seed_candidates = load_seeds_from_collection(session["active_collection"])
+            else:
+                raise click.UsageError(
+                    "Seed papers must be provided via stdin JSON stream, --batch, --seeds, or --from-collection."
+                )
+
+    if not quiet:
+        click.echo(
+            f"Ingested {len(seed_candidates)} seed papers. Executing 1-hop {direction} citation expansion...",
+            err=True,
+        )
+
+    snowballer = CitationSnowballer()
+    result = snowballer.snowball(
+        seeds=seed_candidates,
+        direction=direction,
+        max_backward=max_backward,
+        max_forward=max_forward,
+        min_co_citations=min_co_cites,
+    )
+
+    if not quiet:
+        if result.discovered_candidates:
+            table_disp = format_snowball_table(result)
+            click.echo(table_disp, err=True)
+            click.echo(
+                f"Discovered {len(result.discovered_candidates)} candidates ({len(result.foundational)} foundational, {len(result.recent_advancements)} recent advancements) across {len(result.seeds)} seeds.",
+                err=True,
+            )
+        else:
+            click.echo("No candidates discovered within budget.", err=True)
 
     click.echo(result.to_json(indent=2))
 

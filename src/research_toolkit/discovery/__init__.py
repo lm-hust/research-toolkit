@@ -6,9 +6,11 @@ from research_toolkit.discovery.clients import OpenAlexClient, SemanticScholarCl
 from research_toolkit.discovery.dedup import Deduplicator
 from research_toolkit.discovery.models import (
     AssessmentRecord,
+    CitationEdge,
     PaperCandidate,
     PaperCandidateBatch,
     SelectionResult,
+    SnowballResult,
     clean_doi,
     compute_paper_id,
 )
@@ -18,9 +20,11 @@ from research_toolkit.discovery.venue_registry import VenueRegistry
 
 __all__ = [
     "AssessmentRecord",
+    "CitationEdge",
     "PaperCandidate",
     "PaperCandidateBatch",
     "SelectionResult",
+    "SnowballResult",
     "clean_doi",
     "compute_paper_id",
     "SemanticScholarClient",
