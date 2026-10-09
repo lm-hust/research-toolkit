@@ -1,6 +1,6 @@
 # Research Toolkit
 
-A modular Python & CLI toolkit for literature discovery, Zotero library synchronization, NotebookLM gateway interaction, and Obsidian PKM knowledge distillation.
+A modular Python & CLI toolkit for literature discovery, Zotero library synchronization, Gemini Notebook synchronization, and Obsidian PKM knowledge distillation.
 
 ## Language
 
@@ -38,31 +38,27 @@ The human-in-the-loop terminal boundary where expanded candidate papers from Cit
 _Avoid_: Paper picker, candidate selector
 
 **FulltextCheckpoint**:
-The subsequent workflow boundary between curated paper insertion and NotebookLM synchronization, resolving automated open-access PDFs or manual UCL institutional access.
+The subsequent workflow boundary between curated paper insertion and Gemini Notebook synchronization, resolving automated open-access PDFs or manual UCL institutional access.
 _Avoid_: PDF wait, sync pause
 
-### Notebook & Gateway
+### Notebook
 
 **Gemini Notebook**:
 Google's source-grounded notebook service (formerly NotebookLM): a notebook holds sources and answers questions with citations back to them.
 _Avoid_: NotebookLM (legacy alias; accepted in user speech, not in new docs or code)
 
 **Identity Notebook**:
-The Gemini Notebook named `identity` that holds the researcher's own papers and grant proposals; the grounded record of their track record, queried to draft bios, talk proposals, and research-foundation sections.
+The Gemini Notebook named `Identity` that holds the researcher's own papers and grant proposals; the grounded record of their track record, queried to draft bios, talk proposals, and research-foundation sections.
 _Avoid_: CV notebook, profile notebook, personal notebook
 
-**NotebookLMGateway**:
-The client abstraction managing authentication, notebook lifecycle, PDF source uploading, and grounded Q&A against Google NotebookLM.
-_Avoid_: Gemini bot, AI client
-
-**NotebookSource**:
-A full-text PDF document successfully attached to a NotebookLM notebook for grounded synthesis.
-_Avoid_: Attachment, uploaded file
+**Notebook Source**:
+A document attached to a Gemini Notebook, which the notebook grounds its answers in. A source synced from Zotero carries its Zotero item key in its title, so citations lead back to the item.
+_Avoid_: NotebookSource, attachment, uploaded file
 
 ### PKM & Synthesis
 
 **DistilledEvidence**:
-A structured takeaway, claim, or citation extracted from NotebookLM interactions, formatted for ingestion into Obsidian PKM.
+A structured takeaway, claim, or citation extracted from Gemini Notebook answers, formatted for ingestion into Obsidian PKM.
 _Avoid_: Chat log, summary snippet
 
 ### Remote Gateway & Ingress
