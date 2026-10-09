@@ -58,8 +58,8 @@ ZOTERO_LIBRARY_TYPE=user
 ZOTERO_STORAGE_DIR=/home/ling/Zotero/storage
 
 # --- Google NotebookLM 网关 ---
-# 方式 A：单行 Master Token JSON（跨 VPS 最推荐）
-NOTEBOOKLM_AUTH_JSON='{"account":"you@gmail.com","master_token":"aas_xxx"}'
+# 方式 A：Android master token，存放在 ~/.notebooklm/profiles/default/master_token.json
+# （由 scripts/setup_notebooklm.sh 写入）。不要设置 NOTEBOOKLM_AUTH_JSON：它只接受浏览器 cookie 登录状态。
 NOTEBOOKLM_BACKEND=android
 
 # 方式 B：官方 Gemini 兜底密钥（可选，推荐配置备用）

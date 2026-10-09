@@ -205,7 +205,8 @@ except Exception as e:
       chmod 600 "$HOME/.notebooklm/profiles/default/master_token.json"
       say "  ✓ Saved to ~/.notebooklm/profiles/default/master_token.json"
 
-      write_env "NOTEBOOKLM_AUTH_JSON" "'$CLEAN_JSON'"
+      # The master token lives only in master_token.json; NOTEBOOKLM_AUTH_JSON is
+      # read by notebooklm-py as browser storage state and would shadow it.
       write_env "NOTEBOOKLM_BACKEND" "android"
     else
       warn "Empty input received, skipped."

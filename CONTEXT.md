@@ -43,6 +43,14 @@ _Avoid_: PDF wait, sync pause
 
 ### Notebook & Gateway
 
+**Gemini Notebook**:
+Google's source-grounded notebook service (formerly NotebookLM): a notebook holds sources and answers questions with citations back to them.
+_Avoid_: NotebookLM (legacy alias; accepted in user speech, not in new docs or code)
+
+**Identity Notebook**:
+The Gemini Notebook named `identity` that holds the researcher's own papers and grant proposals; the grounded record of their track record, queried to draft bios, talk proposals, and research-foundation sections.
+_Avoid_: CV notebook, profile notebook, personal notebook
+
 **NotebookLMGateway**:
 The client abstraction managing authentication, notebook lifecycle, PDF source uploading, and grounded Q&A against Google NotebookLM.
 _Avoid_: Gemini bot, AI client
