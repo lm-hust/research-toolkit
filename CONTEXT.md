@@ -48,7 +48,7 @@ Google's source-grounded notebook service (formerly NotebookLM): a notebook hold
 _Avoid_: NotebookLM (legacy alias; accepted in user speech, not in new docs or code)
 
 **Identity Notebook**:
-The Gemini Notebook named `Identity` that holds the researcher's own papers and grant proposals; the grounded record of their track record, queried to draft bios, talk proposals, and research-foundation sections.
+The Gemini Notebook named `Identity` that holds the researcher's own papers and grant proposals; the grounded record of their track record, queried to draft bios, talk proposals, and research-foundation sections. The researcher curates it by hand; it is never synced from a Zotero collection or folder.
 _Avoid_: CV notebook, profile notebook, personal notebook
 
 **Notebook Source**:
