@@ -145,12 +145,48 @@ class ZoteroClient:
                 key = first
         return ZoteroCollection(key=key, name=name, parent_collection=parent_key, user_id=self.user_id)
 
+    def _get_all(self, path: str, page_size: int = 100) -> List[Dict[str, Any]]:
+        """GETs every row of a listing endpoint, paging with `start` until a short page."""
+        rows: List[Dict[str, Any]] = []
+        while True:
+            page = self._request("GET", path, params={"limit": page_size, "start": len(rows)})
+            if not isinstance(page, list):
+                return rows
+            rows.extend(page)
+            if len(page) < page_size:
+                return rows
+
+    def get_collection(self, key_or_name: str) -> Optional[ZoteroCollection]:
+        """
+        Finds a collection by exact key or case-insensitive name. Never creates one.
+        Raises ValueError when the name matches more than one collection.
+        """
+        wanted = key_or_name.strip()
+        rows = self._get_all("/collections")
+        by_key = [c for c in rows if c.get("key") == wanted]
+        matches = by_key or [
+            c for c in rows if c.get("data", {}).get("name", "").strip().lower() == wanted.lower()
+        ]
+        if len(matches) > 1:
+            keys = ", ".join(c.get("key", "") for c in matches)
+            raise ValueError(f"Collection name '{key_or_name}' is ambiguous; use a key: {keys}")
+        if not matches:
+            return None
+        col = matches[0]
+        c_data = col.get("data", {})
+        return ZoteroCollection(
+            key=col.get("key", ""),
+            name=c_data.get("name", ""),
+            parent_collection=c_data.get("parentCollection") or None,
+            version=col.get("version", 0),
+            user_id=self.user_id,
+        )
+
     def get_collection_items(
         self, collection_key: str, limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """Retrieves items in the given personal collection."""
-        params = {"limit": limit}
-        return self._request("GET", f"/collections/{collection_key}/items", params=params)
+        """Retrieves every item row in the collection (papers and their child rows), paged."""
+        return self._get_all(f"/collections/{collection_key}/items", page_size=limit)
 
     def create_items(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Creates items in the personal library."""

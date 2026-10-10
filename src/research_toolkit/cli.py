@@ -16,7 +16,7 @@ import click
 from research_toolkit.discovery.curation import CurationCheckpoint
 from research_toolkit.discovery.query import QueryTranslator
 from research_toolkit.discovery.service import DiscoveryService
-from research_toolkit.synthesis.adapters import get_default_gateway
+from research_toolkit.notebook import sync as notebook_sync
 from research_toolkit.zotero.manager import ZoteroManager
 
 logger = logging.getLogger(__name__)
@@ -470,57 +470,22 @@ def checkpoint(collection: Optional[str], status: bool) -> None:
 
 
 @cli.command("sync-notebook")
+@click.option("--collection", "-c", required=True, help="Zotero collection name or key.")
 @click.option(
-    "--collection",
-    "-c",
+    "--notebook",
     default=None,
-    help="Target Zotero collection name or key. Defaults to active collection in session.",
+    help="Target Gemini Notebook UUID or exact title. Default: the collection's name (created if missing).",
 )
-@click.option(
-    "--allow-partial",
-    is_flag=True,
-    default=False,
-    help="Proceed with upload even if some PDFs are missing.",
-)
-def sync_notebook(collection: Optional[str], allow_partial: bool) -> None:
-    """Create a topic notebook in NotebookLM and upload verified local PDF sources."""
-    session = load_session()
-    col = collection or session.get("active_collection")
-    if not col:
-        click.echo("⚠️ No collection specified. Provide --collection <name-or-key>.", err=True)
-        sys.exit(1)
-
-    manager = ZoteroManager()
-    report = manager.scan_collection_checkpoint(col)
-
-    if report.missing_items and not allow_partial:
-        click.echo(
-            f"🛑 FulltextCheckpoint: {len(report.missing_items)}/{report.total_items} items lack local PDFs.\n"
-            f"Resolve missing PDFs in Zotero first, or pass --allow-partial to proceed with ready items.",
-            err=True,
+def sync_notebook(collection: str, notebook: Optional[str]) -> None:
+    """Sync a Zotero collection's full texts into a Gemini Notebook as `[key] title` sources."""
+    try:
+        report = notebook_sync.sync_collection(
+            ZoteroManager(), collection, notebook, progress=lambda m: click.echo(m, err=True)
         )
+    except notebook_sync.SyncError as e:
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-
-    if not report.ready_items:
-        click.echo("⚠️ No ready PDF files found in collection.", err=True)
-        sys.exit(1)
-
-    click.echo(f"🔄 Creating NotebookLM notebook for: '{report.collection_name}'...")
-    gw = get_default_gateway()
-    notebook = gw.create_notebook(report.collection_name)
-    click.echo(f"📓 Notebook created: ID={notebook.id} ({notebook.title})")
-
-    uploaded = []
-    for item in report.ready_items:
-        if item.pdf_path:
-            click.echo(f"  Uploading source: {item.title[:45]}...")
-            src = gw.upload_source(notebook.id, Path(item.pdf_path))
-            uploaded.append(src)
-
-    session["notebook_id"] = notebook.id
-    session["active_collection"] = col
-    save_session(session)
-    click.echo(f"✨ Successfully synced {len(uploaded)} sources to NotebookLM (ID: {notebook.id}).")
+    click.echo(json.dumps(report, ensure_ascii=False, indent=2))
 
 
 def check_notebook_auth() -> str:
@@ -531,12 +496,10 @@ def check_notebook_auth() -> str:
     """
     import asyncio
 
-    from notebooklm import NotebookLMClient
-    from notebooklm.options import AndroidBackendConfig, ClientConfig
+    from research_toolkit.notebook import client as notebook_client
 
     async def _probe() -> int:
-        config = ClientConfig(backend=AndroidBackendConfig())
-        async with NotebookLMClient.from_storage(config=config) as client:
+        async with notebook_client.open_client() as client:
             return len(await client.notebooks.list())
 
     return f"Authenticated ({asyncio.run(_probe())} notebooks)"

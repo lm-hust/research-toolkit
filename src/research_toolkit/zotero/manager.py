@@ -299,15 +299,14 @@ class ZoteroManager:
         reconciled.extend(no_id_items)
         return reconciled, duplicate_count
 
-    def scan_collection_checkpoint(
-        self,
-        collection_key: str,
-        collection_name: str = "",
-        auto_download_cloud: bool = True,
-    ) -> CheckpointReport:
+    NON_PAPER_TYPES = frozenset({"attachment", "note", "annotation"})
+
+    def list_fulltext_items(
+        self, collection_key: str, auto_download_cloud: bool = True
+    ) -> List[ZoteroItem]:
         """
-        Scans a collection for full-text PDF attachments on disk (or resolves from Zotero Cloud)
-        and partitions items into ready and missing sets.
+        Lists the collection's papers (every key, no duplicate reconciliation) with their first
+        resolvable PDF. Child notes and annotations are not papers.
         """
         raw_items = self.client.get_collection_items(collection_key)
 
@@ -323,24 +322,20 @@ class ZoteroManager:
                 parent_k = data.get("parentItem")
                 if parent_k:
                     attachments.setdefault(parent_k, []).append(raw)
-            else:
-                doi = data.get("DOI")
-                url = data.get("url")
-                title = data.get("title", "Untitled")
+            elif itype not in self.NON_PAPER_TYPES:
                 tags = [t.get("tag", "") for t in data.get("tags", [])]
                 parent_items[key] = ZoteroItem(
                     key=key,
-                    title=title,
-                    doi=doi,
-                    url=url,
+                    title=data.get("title", "Untitled"),
+                    doi=data.get("DOI"),
+                    url=data.get("url"),
                     item_type=itype,
                     tags=tags,
                 )
 
         # Associate PDF attachments with parent items (probing disk or resolving from cloud)
         for p_key, item in parent_items.items():
-            child_attachments = attachments.get(p_key, [])
-            for att in child_attachments:
+            for att in attachments.get(p_key, []):
                 att_key = att.get("key", "")
                 att_data = att.get("data", {})
                 content_type = att_data.get("contentType", "")
@@ -355,8 +350,24 @@ class ZoteroManager:
                         item.pdf_path = str(resolved_pdf)
                         break
 
+        return list(parent_items.values())
+
+    def scan_collection_checkpoint(
+        self,
+        collection_key: str,
+        collection_name: str = "",
+        auto_download_cloud: bool = True,
+    ) -> CheckpointReport:
+        """
+        Scans a collection for full-text PDF attachments on disk (or resolves from Zotero Cloud)
+        and partitions items into ready and missing sets.
+        """
+        parent_items = self.list_fulltext_items(
+            collection_key, auto_download_cloud=auto_download_cloud
+        )
+
         # Reconcile duplicates
-        reconciled_items, dup_count = self.reconcile_duplicates(list(parent_items.values()))
+        reconciled_items, dup_count = self.reconcile_duplicates(parent_items)
 
         ready_items = [it for it in reconciled_items if it.has_pdf]
         missing_items = [it for it in reconciled_items if not it.has_pdf]
