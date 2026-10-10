@@ -10,6 +10,8 @@ Usage:
     lib.add_paper(col, "K1", "Paper one", pdf=True)
     with patch("research_toolkit.cli.ZoteroManager", lib.manager):
         ...
+
+Writes are recorded, not sent: `created_notes` (knob `note_errors = {parent key: exc}`).
 """
 
 from __future__ import annotations
@@ -28,6 +30,8 @@ class FakeZoteroLibrary(ZoteroClient):
         self.storage_dir = storage_dir
         self.collections: Dict[str, ZoteroCollection] = {}
         self.rows: Dict[str, List[Dict[str, Any]]] = {}
+        self.created_notes: List[Dict[str, Any]] = []
+        self.note_errors: Dict[str, Exception] = {}
 
     def _request(self, *args: Any, **kwargs: Any) -> Any:
         raise AssertionError(f"unexpected Zotero HTTP call: {args} {kwargs}")
@@ -128,6 +132,14 @@ class FakeZoteroLibrary(ZoteroClient):
 
     def download_item_file(self, item_key: str, dest_path: Path) -> Optional[Path]:
         return None
+
+    def create_child_note(self, parent_key: str, note_html: str, tags: List[str]) -> str:
+        """Records the note in `created_notes`; `note_errors[parent_key]` makes it raise."""
+        if parent_key in self.note_errors:
+            raise self.note_errors[parent_key]
+        key = f"N{len(self.created_notes):07d}"
+        self.created_notes.append({"key": key, "parentItem": parent_key, "note": note_html, "tags": list(tags)})
+        return key
 
     def manager(self) -> ZoteroManager:
         return ZoteroManager(client=self, storage_dir=self.storage_dir)

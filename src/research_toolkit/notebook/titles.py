@@ -19,3 +19,8 @@ def source_key(title: Optional[str]) -> Optional[str]:
     """Returns the Zotero key from a `[key]`-prefixed source title, else None."""
     match = _KEY_PREFIX.match(title or "")
     return match.group(1) if match else None
+
+
+def source_paper_title(title: Optional[str]) -> str:
+    """Returns the paper title of a `[key]`-prefixed source title (the whole title otherwise)."""
+    return _KEY_PREFIX.sub("", title or "", count=1).strip()
