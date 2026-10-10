@@ -347,5 +347,128 @@ class SkimNotebookCliTest(unittest.TestCase):
         self.assertEqual(self.fake.writes, [])
 
 
+FOCUS = "数据中心能效如何影响 AI 碳排放"
+RELEVANCE_TAG = "gemini-skim/relevance:"
+
+
+class SkimRelevanceTest(unittest.TestCase):
+    """`--focus` asks for relevance, writes it into the note and tags the Zotero item."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.zotero = FakeZoteroLibrary(self.tmp / "storage")
+        self.fake = FakeNotebookClient()
+        self.nb_id = self.fake.add_notebook(NOTEBOOK, ["[K1] Energy and Policy Considerations", "[K2] Green AI"])
+        self.k1_source, self.k2_source = (s.id for s in self.fake.state[self.nb_id].sources)
+
+    def run_skim(self, *args: str) -> dict[str, Any]:
+        with patch(OPEN_CLIENT, self.fake.open), patch(
+            "research_toolkit.cli.ZoteroManager", self.zotero.manager
+        ):
+            result = CliRunner().invoke(cli, ["skim-notebook", "--notebook", NOTEBOOK, *args])
+        self.assertEqual(result.exit_code, 0, result.output)
+        report: dict[str, Any] = json.loads(result.stdout)
+        return report
+
+    def answer_with_relevance(self, source_id: str, relevance_section: str) -> None:
+        self.fake.answers[source_id] = (f"{ANSWER}\n\n## 与研究问题的相关性\n{relevance_section}", [])
+
+    def relevance_tags(self, key: str) -> list[str]:
+        return [t["tag"] for t in self.zotero.item_tags.get(key, []) if t["tag"].startswith(RELEVANCE_TAG)]
+
+    def test_the_prompt_asks_for_relevance_to_the_focus_question(self) -> None:
+        self.run_skim("--key", "K1", "--focus", FOCUS)
+
+        [(question, _)] = self.fake.history(self.nb_id)
+        self.assertIn(FOCUS, question)
+        self.assertIn("相关性", question)
+        for level in ["高", "中", "低"]:
+            self.assertIn(level, question)
+
+    def test_each_relevance_level_gets_its_tag(self) -> None:
+        cases = [
+            ("高\n直接测量了数据中心能耗。", "high"),
+            ("**中**：只间接涉及。", "medium"),
+            ("相关性：低。讨论的是算法效率。", "low"),
+            ("High - measures datacenter energy.", "high"),
+            ("Relevance: **medium**", "medium"),
+            ("low, only tangential", "low"),
+            ("中等相关", "medium"),
+            ("**相关性：** 低", "low"),
+        ]
+        for section, level in cases:
+            with self.subTest(section=section):
+                self.setUp()
+                self.answer_with_relevance(self.k1_source, section)
+
+                report = self.run_skim("--key", "K1", "--focus", FOCUS)
+
+                self.assertEqual(self.relevance_tags("K1"), [f"{RELEVANCE_TAG}{level}"])
+                self.assertEqual(report["written"][0]["relevance"], level)
+                self.assertEqual(report["relevance"][level], 1)
+                html = self.zotero.created_notes[0]["note"]
+                self.assertIn("<h2>与研究问题的相关性</h2>", html)
+                self.assertIn(FOCUS, html.split("</p>", 1)[0])
+
+    def test_a_level_written_on_the_heading_line_is_read(self) -> None:
+        self.fake.answers[self.k1_source] = (f"{ANSWER}\n\n## 相关性：中\n只间接涉及。", [])
+
+        self.run_skim("--key", "K1", "--focus", FOCUS)
+
+        self.assertEqual(self.relevance_tags("K1"), [f"{RELEVANCE_TAG}medium"])
+
+    def test_a_rerun_replaces_the_old_relevance_tag_and_keeps_other_tags(self) -> None:
+        self.zotero.item_tags["K1"] = [
+            {"tag": "energy"},
+            {"tag": f"{RELEVANCE_TAG}low"},
+            {"tag": "to-read", "type": 1},
+        ]
+        self.answer_with_relevance(self.k1_source, "高")
+
+        self.run_skim("--key", "K1", "--focus", FOCUS)
+
+        self.assertEqual(
+            self.zotero.item_tags["K1"],
+            [{"tag": "energy"}, {"tag": "to-read", "type": 1}, {"tag": f"{RELEVANCE_TAG}high"}],
+        )
+
+    def test_without_focus_no_relevance_is_asked_or_tagged(self) -> None:
+        self.zotero.item_tags["K1"] = [{"tag": f"{RELEVANCE_TAG}low"}]
+        self.answer_with_relevance(self.k1_source, "高")
+
+        report = self.run_skim("--key", "K1")
+
+        [(question, _)] = self.fake.history(self.nb_id)
+        self.assertNotIn("相关性", question)
+        self.assertEqual(self.zotero.item_tags["K1"], [{"tag": f"{RELEVANCE_TAG}low"}])
+        self.assertNotIn("relevance", report["written"][0])
+        self.assertEqual(report["relevance"], {"high": 0, "medium": 0, "low": 0, "unparsed": 0})
+
+    def test_unparseable_relevance_is_reported_not_tagged(self) -> None:
+        self.zotero.item_tags["K1"] = [{"tag": f"{RELEVANCE_TAG}low"}]
+        self.fake.answers[self.k1_source] = (ANSWER, [])  # no relevance section
+        self.answer_with_relevance(self.k2_source, "高/中/低 都有可能，难以判断。")
+
+        report = self.run_skim("--key", "K1", "--key", "K2", "--focus", FOCUS)
+
+        self.assertEqual(self.zotero.item_tags["K1"], [{"tag": f"{RELEVANCE_TAG}low"}])
+        self.assertNotIn("K2", self.zotero.item_tags)
+        self.assertEqual([w["relevance"] for w in report["written"]], ["unparsed", "unparsed"])
+        self.assertEqual(report["relevance"], {"high": 0, "medium": 0, "low": 0, "unparsed": 2})
+
+    def test_a_tagging_failure_is_reported_with_the_written_note(self) -> None:
+        self.answer_with_relevance(self.k1_source, "高")
+        self.zotero.tag_errors["K1"] = RuntimeError("Zotero 412")
+
+        report = self.run_skim("--key", "K1", "--focus", FOCUS)
+
+        self.assertEqual(report["written"], [])
+        [failed] = report["failed"]
+        self.assertEqual(failed["note_key"], self.zotero.created_notes[0]["key"])
+        self.assertIn("Zotero 412", failed["error"])
+        self.assertEqual(report["relevance"]["high"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

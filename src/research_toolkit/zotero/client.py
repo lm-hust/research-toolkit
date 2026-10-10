@@ -265,6 +265,24 @@ class ZoteroClient:
                 f"Zotero refused to update note {note_key} (HTTP {e.code}): {e.reason}"
             ) from e
 
+    def replace_tags_with_prefix(self, item_key: str, prefix: str, new_tags: List[str]) -> None:
+        """
+        Replaces the item's tags that start with `prefix` by `new_tags`, keeping every other tag
+        verbatim (a PATCH replaces the whole tag list). Skips the write when nothing changes.
+        """
+        item = self._request("GET", f"/items/{item_key}")
+        current: List[Dict[str, Any]] = list(item.get("data", {}).get("tags", []))
+        kept = [t for t in current if not str(t.get("tag", "")).startswith(prefix)]
+        updated = kept + [{"tag": t} for t in new_tags]
+        if updated == current:
+            return
+        self._request(
+            "PATCH",
+            f"/items/{item_key}",
+            payload={"tags": updated},
+            extra_headers={"If-Unmodified-Since-Version": str(item.get("version"))},
+        )
+
     def create_attachment_link(
         self, parent_key: str, title: str, url: str, content_type: str = "application/pdf"
     ) -> Dict[str, Any]:
