@@ -38,8 +38,8 @@ class TestDualStackServer(unittest.TestCase):
         self.assertIn("paths", data)
         self.assertIn("/api/v1/search", data["paths"])
         self.assertIn("/api/v1/checkpoint", data["paths"])
-        self.assertIn("/api/v1/sync-notebook", data["paths"])
-        self.assertIn("/api/v1/ask", data["paths"])
+        self.assertNotIn("/api/v1/sync-notebook", data["paths"])
+        self.assertNotIn("/api/v1/ask", data["paths"])
 
     def test_unauthorized_access_rejected(self):
         resp = self.client.post("/api/v1/search", json={"topic": "GNN"})
@@ -89,34 +89,6 @@ class TestDualStackServer(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["total"], 2)
         mock_verify.assert_called_once_with(collection="my_collection")
-
-    @patch("research_toolkit.mcp.server.sync_notebook")
-    def test_sync_notebook_endpoint(self, mock_sync):
-        mock_sync.return_value = {"status": "success", "uploaded_count": 3}
-
-        headers = {"Authorization": f"Bearer {self.test_key}"}
-        resp = self.client.post(
-            "/api/v1/sync-notebook",
-            json={"collection": "my_collection", "allow_partial": True},
-            headers=headers,
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["uploaded_count"], 3)
-        mock_sync.assert_called_once_with(collection="my_collection", allow_partial=True)
-
-    @patch("research_toolkit.mcp.server.ask_notebook")
-    def test_ask_notebook_endpoint(self, mock_ask):
-        mock_ask.return_value = {"status": "success", "answer": "Synthesized insight"}
-
-        headers = {"Authorization": f"Bearer {self.test_key}"}
-        resp = self.client.post(
-            "/api/v1/ask",
-            json={"query": "What is oversmoothing?", "notebook_id": "nb_123"},
-            headers=headers,
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["answer"], "Synthesized insight")
-        mock_ask.assert_called_once_with(query="What is oversmoothing?", notebook_id="nb_123")
 
 
 MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
@@ -189,7 +161,7 @@ class TestMcpStreamableHttp(unittest.TestCase):
         tool_names = {t["name"] for t in _parse_mcp_response(resp)["result"]["tools"]}
         self.assertEqual(
             tool_names,
-            {"search_literature", "verify_checkpoint", "sync_notebook", "ask_notebook"},
+            {"search_literature", "verify_checkpoint"},
         )
 
     def test_legacy_sse_requires_token(self):

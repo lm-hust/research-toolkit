@@ -8,12 +8,10 @@ from unittest.mock import MagicMock, patch
 
 from research_toolkit.discovery.models import PaperCandidate
 from research_toolkit.mcp.tools import (
-    ask_notebook,
     get_tools_manifest,
     search_literature,
     verify_checkpoint,
 )
-from research_toolkit.synthesis.models import DistilledEvidence, GroundedAnswer
 from research_toolkit.zotero.models import CheckpointReport, ZoteroItem
 
 
@@ -23,8 +21,8 @@ class TestMcpTools(unittest.TestCase):
         tool_names = [t["name"] for t in manifest]
         self.assertIn("search_literature", tool_names)
         self.assertIn("verify_checkpoint", tool_names)
-        self.assertIn("sync_notebook", tool_names)
-        self.assertIn("ask_notebook", tool_names)
+        self.assertNotIn("sync_notebook", tool_names)
+        self.assertNotIn("ask_notebook", tool_names)
 
         # Check JSON schema format for search_literature
         search_tool = next(t for t in manifest if t["name"] == "search_literature")
@@ -79,30 +77,6 @@ class TestMcpTools(unittest.TestCase):
         self.assertEqual(result["ready_count"], 1)
         self.assertEqual(result["missing_count"], 1)
         self.assertEqual(result["missing_items"][0]["doi"], "10.1000/p2")
-
-    @patch("research_toolkit.mcp.tools.get_default_gateway")
-    def test_ask_notebook_tool(self, mock_gw_getter):
-        mock_gw = MagicMock()
-        mock_gw_getter.return_value = mock_gw
-        mock_gw.query_sources.return_value = GroundedAnswer(
-            answer="GNN explanation",
-            citations=[
-                DistilledEvidence(
-                    quote="key quote",
-                    source_id="src_1",
-                    source_title="GNN Survey",
-                    start_offset=0,
-                    end_offset=9,
-                )
-            ],
-            notebook_id="nb_1",
-        )
-
-        result = ask_notebook(query="How does GNN work?", notebook_id="nb_1")
-        self.assertEqual(result["status"], "success")
-        self.assertEqual(result["answer"], "GNN explanation")
-        self.assertEqual(len(result["citations"]), 1)
-        self.assertEqual(result["citations"][0]["quote"], "key quote")
 
 
 if __name__ == "__main__":

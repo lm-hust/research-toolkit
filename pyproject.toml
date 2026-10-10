@@ -56,7 +56,6 @@ ignore = ["E501"]
 "src/research_toolkit/zotero/client.py" = ["TID251"]
 "src/research_toolkit/zotero/manager.py" = ["TID251"]
 "src/research_toolkit/synthesis/gateway.py" = ["TID251"]
-"src/research_toolkit/synthesis/adapters.py" = ["TID251"]
 "tests/*" = ["TID251"]
 
 [tool.mypy]

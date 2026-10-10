@@ -1,7 +1,6 @@
 """
 tests/test_gateway.py
-Tests for NotebookLMGateway, NotebookLMPyAdapter, GeminiGroundingFallbackAdapter,
-and grounded Q&A with DistilledEvidence.
+Tests for NotebookLMGateway and NotebookLMPyAdapter.
 """
 
 import json
@@ -9,10 +8,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from research_toolkit.synthesis.adapters import (
-    GeminiGroundingFallbackAdapter,
     NotebookLMPyAdapter,
     get_default_gateway,
 )
@@ -81,64 +79,11 @@ class TestNotebookLMPyAdapter(unittest.TestCase):
             self.assertIn("We present graph attention networks", citation.quote)
 
 
-class TestGeminiGroundingFallbackAdapter(unittest.TestCase):
-    def test_gemini_fallback_configuration(self):
-        """Configured when GEMINI_API_KEY is provided."""
-        with patch.dict(os.environ, {"GEMINI_API_KEY": "AIzaSyMockKey123"}):
-            adapter = GeminiGroundingFallbackAdapter()
-            self.assertTrue(adapter.is_configured())
-            self.assertEqual(adapter.api_key, "AIzaSyMockKey123")
-
-    @patch("urllib.request.urlopen")
-    def test_gemini_fallback_query(self, mock_urlopen):
-        """Simulates querying Gemini API and extracting grounded citations."""
-        adapter = GeminiGroundingFallbackAdapter(api_key="mock_key")
-
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "candidates": [
-                {
-                    "content": {
-                        "parts": [
-                            {"text": "Diffusion models generate images by reversing noise."}
-                        ]
-                    },
-                    "groundingMetadata": {
-                        "groundingChunks": [
-                            {"web": {"title": "DDPM Paper", "uri": "https://arxiv.org/abs/2006.11239"}}
-                        ],
-                        "groundingSupports": [
-                            {
-                                "groundingChunkIndices": [0],
-                                "segment": {"startIndex": 0, "endIndex": 52, "text": "Diffusion models generate images by reversing noise."},
-                            }
-                        ],
-                    },
-                }
-            ]
-        }).encode("utf-8")
-        mock_resp.__enter__.return_value = mock_resp
-        mock_urlopen.return_value = mock_resp
-
-        ans = adapter.query_sources("nb_mock", "Explain diffusion models")
-        self.assertIn("reversing noise", ans.answer)
-        self.assertEqual(len(ans.citations), 1)
-        self.assertEqual(ans.citations[0].start_offset, 0)
-        self.assertEqual(ans.citations[0].end_offset, 52)
-
-
 class TestGatewayFactory(unittest.TestCase):
     def test_prefers_notebooklm_when_auth_json_present(self):
         with patch.dict(os.environ, {"NOTEBOOKLM_AUTH_JSON": '{"master_token": "abc"}'}):
             gw = get_default_gateway()
             self.assertIsInstance(gw, NotebookLMPyAdapter)
-
-    def test_falls_back_to_gemini_when_only_gemini_key_present(self):
-        with patch.dict(os.environ, {"GEMINI_API_KEY": "AIza123"}, clear=True):
-            with patch.object(NotebookLMPyAdapter, "is_configured", return_value=False):
-                gw = get_default_gateway()
-                self.assertIsInstance(gw, GeminiGroundingFallbackAdapter)
-
 
 
 if __name__ == "__main__":
