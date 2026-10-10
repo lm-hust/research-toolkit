@@ -1,10 +1,12 @@
 """
 src/research_toolkit/notebook/sync.py
-Incremental sync of a Zotero collection into a Gemini Notebook.
+Incremental sync of Zotero collections into a Gemini Notebook.
 
 Every uploaded Notebook Source is titled `[<Zotero key>] <title>`; a source whose title carries
 an item's `[key]` prefix means that item is already synced. There is no local state: a re-run
 recomputes everything from Zotero and the notebook, so an interrupted run resumes by re-running.
+The run first computes a `SyncPlan` (notebook/plan.py); a dry run or a guard abort stops there,
+before any write (including creating the notebook).
 
 The server is unreliable about titles (it may reset a title to the uploaded filename, during
 processing or a while after) and about uploads (an UNCONFIRMED_WRITE can leave a residue stuck
@@ -16,17 +18,18 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
-from notebooklm import NotebookLMError, Source
+from notebooklm import Notebook, NotebookLMError, Source
 
 from research_toolkit.notebook import client as notebook_client
 from research_toolkit.notebook.client import NotebookClient
-from research_toolkit.notebook.fulltext import URL_KIND, upload_kind, upload_target
-from research_toolkit.notebook.resolve import NotebookResolutionError, resolve_notebook
+from research_toolkit.notebook.fulltext import URL_KIND, upload_target
+from research_toolkit.notebook.plan import SyncPlan, plan_sync
+from research_toolkit.notebook.resolve import NotebookResolutionError, find_notebook
 from research_toolkit.notebook.titles import source_key, source_title
 from research_toolkit.zotero.manager import ZoteroManager
-from research_toolkit.zotero.models import ZoteroItem
+from research_toolkit.zotero.models import ZoteroCollection, ZoteroItem
 
 Progress = Callable[[str], None]
 
@@ -41,67 +44,147 @@ def _entry(item: ZoteroItem) -> dict[str, Any]:
     return {"key": item.key, "title": item.title}
 
 
-def sync_collection(
-    manager: ZoteroManager,
-    collection_ref: str,
-    notebook_ref: Optional[str] = None,
-    progress: Progress = lambda _msg: None,
-    allow_url: bool = False,
-) -> dict[str, Any]:
-    """Syncs one Zotero collection (name or key) and returns the JSON-ready report."""
-    try:
-        collection = manager.client.get_collection(collection_ref)
-    except ValueError as e:
-        raise SyncError(str(e)) from e
-    if collection is None:
-        raise SyncError(f"Zotero collection '{collection_ref}' not found.")
+def _source_entry(source: Source) -> dict[str, Any]:
+    return {"key": source_key(source.title), "title": source.title, "source_id": source.id}
 
-    progress(f"Resolving full texts in Zotero collection '{collection.name}'...")
-    items = manager.list_fulltext_items(collection.key)
-    return asyncio.run(_sync_items(items, notebook_ref, collection.name, progress, allow_url))
+
+def _collections(
+    manager: ZoteroManager, refs: Sequence[str], recursive: bool
+) -> list[ZoteroCollection]:
+    """Resolves each name or key; with `recursive`, adds every subcollection below them."""
+    found: list[ZoteroCollection] = []
+    for ref in refs:
+        try:
+            collection = manager.client.get_collection(ref)
+        except ValueError as e:
+            raise SyncError(str(e)) from e
+        if collection is None:
+            raise SyncError(f"Zotero collection '{ref}' not found.")
+        found.append(collection)
+    if recursive:
+        pending = list(found)
+        while pending:
+            children = manager.client.get_subcollections(pending.pop().key)
+            found.extend(children)
+            pending.extend(children)
+    unique: dict[str, ZoteroCollection] = {}
+    for collection in found:
+        unique.setdefault(collection.key, collection)
+    return list(unique.values())
+
+
+def sync_collections(
+    manager: ZoteroManager,
+    collection_refs: Sequence[str],
+    notebook_ref: Optional[str] = None,
+    *,
+    recursive: bool = False,
+    replace: Sequence[str] = (),
+    dry_run: bool = False,
+    force: bool = False,
+    allow_url: bool = False,
+    progress: Progress = lambda _msg: None,
+) -> dict[str, Any]:
+    """
+    Syncs Zotero collections (names or keys) into one notebook and returns the JSON-ready
+    report. Without `notebook_ref` the notebook is named after the single collection.
+    """
+    if not collection_refs:
+        raise SyncError("Give at least one --collection.")
+    if len(collection_refs) > 1 and not notebook_ref:
+        raise SyncError("Several collections go into one notebook: pass --notebook.")
+    collections = _collections(manager, collection_refs, recursive)
+
+    items: list[ZoteroItem] = []
+    for collection in collections:
+        progress(f"Resolving full texts in Zotero collection '{collection.name}'...")
+        items.extend(manager.list_fulltext_items(collection.key))
+    return asyncio.run(
+        _sync_items(
+            items,
+            notebook_ref,
+            collections[0].name,
+            replace=replace,
+            dry_run=dry_run,
+            force=force,
+            allow_url=allow_url,
+            progress=progress,
+        )
+    )
+
+
+def _plan_report(
+    notebook: Optional[Notebook], title: str, plan: SyncPlan, dry_run: bool
+) -> dict[str, Any]:
+    return {
+        "notebook_id": notebook.id if notebook else None,
+        "notebook_title": notebook.title if notebook else title,
+        "created": False,
+        "dry_run": dry_run,
+        "aborted_reason": plan.aborted_reason,
+        "added": (
+            [{**_entry(u.item), "kind": u.kind} for u in plan.uploads]
+            if dry_run and not plan.aborted_reason
+            else []
+        ),
+        "replaced": [],
+        "renamed": [],
+        "skipped_existing": [_entry(i) for i in plan.existing],
+        "missing_fulltext": [_entry(i) for i in plan.missing_fulltext],
+        "orphaned": [_source_entry(s) for s in plan.orphaned],
+        "failed": [],
+        "extra_attachments": [
+            {**_entry(i), "count": i.extra_attachments} for i in plan.extra_attachments
+        ],
+        "source_count": plan.source_count,
+        "projected_source_count": plan.projected_source_count,
+    }
 
 
 async def _sync_items(
     items: list[ZoteroItem],
     notebook_ref: Optional[str],
     default_title: str,
-    progress: Progress,
+    *,
+    replace: Sequence[str],
+    dry_run: bool,
+    force: bool,
     allow_url: bool,
+    progress: Progress,
 ) -> dict[str, Any]:
     async with notebook_client.open_client() as client:
         try:
-            notebook, created = await resolve_notebook(client, notebook_ref, default_title)
+            notebook = await find_notebook(client, notebook_ref, default_title)
         except NotebookResolutionError as e:
             raise SyncError(str(e)) from e
-        progress(f"{'Created' if created else 'Using'} notebook '{notebook.title}' ({notebook.id})")
+        sources = await client.sources.list(notebook.id) if notebook else []
+        plan = plan_sync(items, sources, replace_keys=replace, force=force, allow_url=allow_url)
+        report = _plan_report(notebook, notebook_ref or default_title, plan, dry_run)
+        progress(
+            f"Plan: {len(plan.uploads)} to upload, {len(plan.existing)} already synced, "
+            f"{len(plan.missing_fulltext)} without full text, {len(plan.orphaned)} orphaned"
+        )
+        if plan.aborted_reason:
+            progress(f"Aborted: {plan.aborted_reason}")
+            return report
+        if dry_run:
+            return report
 
-        report: dict[str, Any] = {
-            "notebook_id": notebook.id,
-            "notebook_title": notebook.title,
-            "created": created,
-            "added": [],
-            "skipped_existing": [],
-            "missing_fulltext": [],
-            "renamed": [],
-            "failed": [],
-            "extra_attachments": [
-                {**_entry(item), "count": item.extra_attachments}
-                for item in items
-                if item.fulltext_kind and item.extra_attachments
-            ],
-        }
-        sources = await client.sources.list(notebook.id)
-        existing = {source_key(s.title) for s in sources}
+        if notebook is None:
+            notebook = await client.notebooks.create(default_title)
+            report.update(notebook_id=notebook.id, notebook_title=notebook.title, created=True)
+        progress(
+            f"{'Created' if report['created'] else 'Using'} notebook "
+            f"'{notebook.title}' ({notebook.id})"
+        )
+
         uploader = _Uploader(client, notebook.id, report, progress, {s.id for s in sources})
-
-        for item in items:
-            kind = upload_kind(item, allow_url)
-            if item.key in existing:
-                report["skipped_existing"].append(_entry(item))
-            elif kind is None:
-                report["missing_fulltext"].append(_entry(item))
-            else:
-                await uploader.upload(item, kind)
+        for planned in plan.uploads:
+            for old in planned.replaces:
+                progress(f"Deleting old source {old.title} ({old.id}) for --replace")
+                await client.sources.delete(notebook.id, old.id)
+                report["replaced"].append(_source_entry(old))
+            await uploader.upload(planned.item, planned.kind)
         await uploader.recheck_titles()
         return report
 

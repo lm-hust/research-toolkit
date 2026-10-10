@@ -161,6 +161,46 @@ class SyncNotebookFulltextTest(unittest.TestCase):
             ["[K1] Paywalled", "[K2] Blog post", "[K3] Has a PDF"],
         )
 
+    def test_dry_run_plan_counts_allow_url_items_as_uploads(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Paywalled", pdf=False, doi="10.1000/xyz")
+        self.zotero.add_paper(self.col, "K2", "Green AI", pdf=False)
+        self.zotero.add_pdf(self.col, "K2", "main.pdf")
+        self.zotero.add_pdf(self.col, "K2", "supplement.pdf")
+        self.zotero.add_paper(self.col, "K3", "Nothing at all", pdf=False)
+        self.fake.add_notebook(COLLECTION, ["[K0] Already there"])
+
+        without = self.report(self.run_sync("--dry-run"))
+        self.assertEqual(self.keys(without["missing_fulltext"]), ["K1", "K3"])
+        self.assertEqual(without["projected_source_count"], 2)
+
+        report = self.report(self.run_sync("--dry-run", "--allow-url"))
+
+        self.assertEqual(
+            report["added"],
+            [
+                {"key": "K1", "title": "Paywalled", "kind": "url"},
+                {"key": "K2", "title": "Green AI", "kind": "pdf"},
+            ],
+        )
+        self.assertEqual(self.keys(report["missing_fulltext"]), ["K3"])
+        self.assertEqual(report["projected_source_count"], 3)
+        self.assertEqual(
+            report["extra_attachments"], [{"key": "K2", "title": "Green AI", "count": 1}]
+        )
+        self.assertEqual(self.fake.writes, [])
+
+    def test_replace_reuploads_a_url_item_with_allow_url(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Paywalled", pdf=False, doi="10.1000/xyz")
+        nb_id = self.fake.add_notebook(COLLECTION, ["[K1] Paywalled"])
+        old_id = self.fake.state[nb_id].sources[0].id
+
+        report = self.report(self.run_sync("--allow-url", "--replace", "K1"))
+
+        self.assertEqual(report["added"], [{"key": "K1", "title": "Paywalled", "kind": "url"}])
+        self.assertEqual([e["source_id"] for e in report["replaced"]], [old_id])
+        self.assertIn(("delete_source", nb_id, old_id), self.fake.writes)
+        self.assertEqual(self.fake.source_titles(nb_id), ["[K1] Paywalled"])
+
 
 if __name__ == "__main__":
     unittest.main()
