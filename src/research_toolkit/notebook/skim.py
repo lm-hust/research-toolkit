@@ -6,6 +6,10 @@ conversation restricted to that source, written back as a child note on the Zote
 Prompt and note are separate steps: `build_prompt()` lists `SECTIONS` as `## <heading>` blocks,
 `render_note()` turns Gemini's markdown answer plus its `cited_text` references into the Zotero
 note HTML. Gemini's page numbers are unreliable, so provenance is `cited_text` only.
+
+With a focus question the prompt adds a `RELEVANCE_HEADING` section; `parse_relevance()` reads the
+level from it and the Zotero item gets one `gemini-skim/relevance:<level>` tag. A level that cannot
+be read is reported as "unparsed" and no tag is touched.
 """
 
 from __future__ import annotations
@@ -32,6 +36,10 @@ Progress = Callable[[str], None]
 SKIM_NOTE_TAG = "gemini-skim/ai-note"
 NOTE_TITLE_PREFIX = "Gemini 初读："
 SNIPPET_CHARS = 300
+RELEVANCE_TAG_PREFIX = "gemini-skim/relevance:"
+RELEVANCE_HEADING = "与研究问题的相关性"
+RELEVANCE_LEVELS = ("high", "medium", "low")
+UNPARSED = "unparsed"
 
 # (heading Gemini must use, what goes under it)
 SECTIONS: tuple[tuple[str, str], ...] = (
@@ -54,13 +62,50 @@ class SkimTarget:
     source_id: str
 
 
-def build_prompt() -> str:
-    blocks = "\n".join(f"## {heading}\n{guide}" for heading, guide in SECTIONS)
+def build_prompt(focus: Optional[str] = None) -> str:
+    sections = list(SECTIONS)
+    if focus:
+        sections.append(
+            (
+                RELEVANCE_HEADING,
+                f"研究问题：{focus}\n第一行只写一个字：高、中 或 低，表示这篇论文与该研究问题的相关性；"
+                "从第二行起写理由。",
+            )
+        )
+    blocks = "\n".join(f"## {heading}\n{guide}" for heading, guide in sections)
     return (
         "请只根据这篇来源，用中文对论文做结构化初读。严格按下面的小节输出，"
         "每个小节以给定的二级标题（## 标题）开头，不要增加其他小节，不要写页码。\n\n"
         f"{blocks}"
     )
+
+
+_LEVEL_WORDS = {"高": "high", "中": "medium", "低": "low", "high": "high", "medium": "medium", "low": "low"}
+_LEVEL_AT_START = re.compile(
+    r"^(?:(?:相关性|相关程度|relevance)(?:等级|level)?\s*[:：]?\s*)?"
+    r"(高|中|低|high|medium|low)(?![a-z/／、|])",
+    re.IGNORECASE,
+)
+
+
+def parse_relevance(answer: str) -> Optional[str]:
+    """`high|medium|low` from the first line of the relevance section, or None if unreadable."""
+    in_section = False
+    for raw in answer.splitlines():
+        heading = re.match(r"^\s*#{1,6}\s*(.*)$", raw)
+        if heading:
+            title = heading.group(1).lower()
+            in_section = "相关性" in title or "relevance" in title
+            if not in_section:
+                continue
+            # "## 相关性：中" puts the level on the heading line itself
+            raw = re.split(r"[:：]", heading.group(1), maxsplit=1)[1] if re.search(r"[:：]", title) else ""
+        line = re.sub(r"[*_`>#\-]", "", raw).strip()
+        if not in_section or not line:
+            continue
+        match = _LEVEL_AT_START.match(line)
+        return _LEVEL_WORDS[match.group(1).lower()] if match else None
+    return None
 
 
 def _inline(text: str) -> str:
@@ -141,18 +186,23 @@ def _provenance(references: list[ChatReference]) -> list[str]:
 
 
 def render_note(
-    target: SkimTarget, notebook_id: str, result: AskResult, today: datetime.date
+    target: SkimTarget,
+    notebook_id: str,
+    result: AskResult,
+    today: datetime.date,
+    focus: Optional[str] = None,
 ) -> str:
     """Zotero note HTML. Zotero shows a note's first line as its title."""
-    header = "<br/>".join(
-        [
-            f"笔记本 UUID：{html.escape(notebook_id)}",
-            f"来源 ID：{html.escape(target.source_id)}",
-            f"日期：{today.isoformat()}",
-            f"生成工具：notebooklm-py {notebooklm.__version__}",
-            f"标签：{SKIM_NOTE_TAG}",
-        ]
-    )
+    lines = [
+        f"笔记本 UUID：{html.escape(notebook_id)}",
+        f"来源 ID：{html.escape(target.source_id)}",
+        f"日期：{today.isoformat()}",
+        f"生成工具：notebooklm-py {notebooklm.__version__}",
+        f"标签：{SKIM_NOTE_TAG}",
+    ]
+    if focus:
+        lines.append(f"研究问题：{html.escape(focus, quote=False)}")
+    header = "<br/>".join(lines)
     parts = [
         f"<h1>{html.escape(NOTE_TITLE_PREFIX + target.title, quote=False)}</h1>",
         f"<p>{header}</p>",
@@ -170,13 +220,21 @@ def skim_notebook(
     notebook_ref: str,
     keys: list[str],
     progress: Progress = lambda _msg: None,
+    focus: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Skims the `[key]` sources named by `keys` and returns the JSON-ready report."""
-    return asyncio.run(_skim(zotero, notebook_ref, keys, progress))
+    """Skims the `[key]` sources named by `keys` and returns the JSON-ready report.
+
+    With `focus`, each paper is also rated for relevance to that question and tagged in Zotero.
+    """
+    return asyncio.run(_skim(zotero, notebook_ref, keys, progress, focus))
 
 
 async def _skim(
-    zotero: ZoteroClient, notebook_ref: str, keys: list[str], progress: Progress
+    zotero: ZoteroClient,
+    notebook_ref: str,
+    keys: list[str],
+    progress: Progress,
+    focus: Optional[str] = None,
 ) -> dict[str, Any]:
     async with notebook_client.open_client() as client:
         try:
@@ -191,6 +249,7 @@ async def _skim(
             "saved_history_note": False,
             "written": [],
             "failed": [],
+            "relevance": {**{level: 0 for level in RELEVANCE_LEVELS}, UNPARSED: 0},
         }
         by_key: dict[str, SkimTarget] = {}
         for src in await client.sources.list(notebook.id):
@@ -215,7 +274,9 @@ async def _skim(
             if saved is not None:
                 report["saved_history_note"] = True
                 progress(f"Saved the existing conversation as notebook note '{saved.title}'")
-            await _skim_one(client, zotero, notebook.id, target, own_conversations, report, progress)
+            await _skim_one(
+                client, zotero, notebook.id, target, own_conversations, report, progress, focus
+            )
         return report
 
 
@@ -227,16 +288,35 @@ async def _skim_one(
     own_conversations: set[str],
     report: dict[str, Any],
     progress: Progress,
+    focus: Optional[str] = None,
 ) -> None:
-    entry = {"key": target.key, "title": target.title, "source_id": target.source_id}
+    entry: dict[str, Any] = {"key": target.key, "title": target.title, "source_id": target.source_id}
     progress(f"Skimming [{target.key}] {target.title[:60]} (about 1 min)")
     try:
-        result = await client.chat.ask(notebook_id, build_prompt(), source_ids=[target.source_id])
+        result = await client.chat.ask(
+            notebook_id, build_prompt(focus), source_ids=[target.source_id]
+        )
         own_conversations.add(result.conversation_id)
-        note = render_note(target, notebook_id, result, datetime.date.today())
+        note = render_note(target, notebook_id, result, datetime.date.today(), focus)
         note_key = zotero.create_child_note(target.key, note, [SKIM_NOTE_TAG])
     except Exception as e:  # one paper failing must not stop the run
         progress(f"  failed: {e}")
         report["failed"].append({**entry, "error": str(e)})
         return
-    report["written"].append({**entry, "note_key": note_key})
+    entry["note_key"] = note_key
+    if focus:
+        level = parse_relevance(result.answer)
+        if level is None:
+            progress("  relevance could not be read from the answer; no tag set")
+        else:
+            try:
+                zotero.replace_tags_with_prefix(
+                    target.key, RELEVANCE_TAG_PREFIX, [RELEVANCE_TAG_PREFIX + level]
+                )
+            except Exception as e:
+                progress(f"  note written, relevance tag failed: {e}")
+                report["failed"].append({**entry, "error": f"Relevance tag not set: {e}"})
+                return
+        entry["relevance"] = level or UNPARSED
+        report["relevance"][entry["relevance"]] += 1
+    report["written"].append(entry)
