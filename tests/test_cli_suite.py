@@ -5,9 +5,7 @@ Integration tests for CLI suite: doctor, mcp-schema, and help outputs.
 
 import json
 import os
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from click.testing import CliRunner
@@ -35,20 +33,52 @@ class TestCliSuite(unittest.TestCase):
         self.assertNotEqual(self.runner.invoke(cli, ["ask", "anything"]).exit_code, 0)
 
     def test_doctor_ignores_gemini_api_key(self):
-        env = {k: v for k, v in os.environ.items() if k != "NOTEBOOKLM_AUTH_JSON"}
-        env["GEMINI_API_KEY"] = "AIza123"
-        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, env, clear=True), patch(
-            "pathlib.Path.home", return_value=Path(home)
-        ):
-            result = self.runner.invoke(cli, ["doctor"], terminal_width=400)
+        result = self._doctor(env_extra={"GEMINI_API_KEY": "AIza123"})
         self.assertEqual(result.exit_code, 0)
         self.assertNotIn("GEMINI", result.output)
         self.assertNotIn("Gemini fallback", result.output)
 
     def test_cli_doctor_runs(self):
-        result = self.runner.invoke(cli, ["doctor"])
+        result = self._doctor()
         self.assertEqual(result.exit_code, 0)
         self.assertIn("System Diagnostics", result.output)
+
+    def _doctor(self, env_extra=None, auth=None):
+        env = {k: v for k, v in os.environ.items() if k != "NOTEBOOKLM_AUTH_JSON"}
+        env["COLUMNS"] = "400"  # keep each rich table row on one line
+        env.update(env_extra or {})
+        auth = auth or (lambda: "Authenticated (3 notebooks)")
+        with patch.dict(os.environ, env, clear=True), patch("research_toolkit.cli.check_notebook_auth", side_effect=auth):
+            return self.runner.invoke(cli, ["doctor"], terminal_width=400)
+
+    def test_doctor_reports_gemini_notebook_auth_pass(self):
+        result = self._doctor()
+        self.assertEqual(result.exit_code, 0)
+        row = next(line for line in result.output.splitlines() if "Gemini Notebook" in line)
+        self.assertIn("PASS", row)
+        self.assertIn("Authenticated (3 notebooks)", row)
+
+    def test_doctor_reports_gemini_notebook_auth_failure(self):
+        def broken():
+            raise RuntimeError("master token rejected")
+
+        result = self._doctor(auth=broken)
+        self.assertEqual(result.exit_code, 0)
+        row = next(line for line in result.output.splitlines() if "Gemini Notebook" in line)
+        self.assertIn("FAIL", row)
+        self.assertIn("master token rejected", row)
+
+    def test_doctor_warns_when_auth_json_env_shadows_master_token(self):
+        result = self._doctor(env_extra={"NOTEBOOKLM_AUTH_JSON": '{"cookies": []}'})
+        self.assertEqual(result.exit_code, 0)
+        rows = [line for line in result.output.splitlines() if "NOTEBOOKLM_AUTH_JSON" in line]
+        self.assertTrue(rows, result.output)
+        self.assertIn("WARN", rows[0])
+        self.assertIn("master token", rows[0])
+
+    def test_doctor_omits_auth_json_warning_when_unset(self):
+        result = self._doctor()
+        self.assertNotIn("NOTEBOOKLM_AUTH_JSON", result.output)
 
     def test_cli_mcp_schema_outputs_valid_json(self):
         result = self.runner.invoke(cli, ["mcp-schema"])

@@ -523,6 +523,25 @@ def sync_notebook(collection: Optional[str], allow_partial: bool) -> None:
     click.echo(f"✨ Successfully synced {len(uploaded)} sources to NotebookLM (ID: {notebook.id}).")
 
 
+def check_notebook_auth() -> str:
+    """Authenticate against Gemini Notebook via notebooklm-py; raise on failure.
+
+    Equivalent to `notebooklm auth check --test`: opens a client from the
+    profile master token and lists notebooks as the liveness signal.
+    """
+    import asyncio
+
+    from notebooklm import NotebookLMClient
+    from notebooklm.options import AndroidBackendConfig, ClientConfig
+
+    async def _probe() -> int:
+        config = ClientConfig(backend=AndroidBackendConfig())
+        async with NotebookLMClient.from_storage(config=config) as client:
+            return len(await client.notebooks.list())
+
+    return f"Authenticated ({asyncio.run(_probe())} notebooks)"
+
+
 @cli.command()
 def doctor() -> None:
     """Validate system configuration, credentials, and local storage connectivity."""
@@ -563,16 +582,17 @@ def doctor() -> None:
     oa_key = os.getenv("OPENALEX_API_KEY")
     checks.append(("OpenAlex", "PASS" if oa_key else "INFO", "API key configured" if oa_key else "Public polite pool active."))
 
-    # 4. NotebookLM Gateway
-    nlm_auth = os.getenv("NOTEBOOKLM_AUTH_JSON")
-    master_token_file = Path.home() / ".notebooklm" / "profiles" / "default" / "master_token.json"
-
-    if nlm_auth:
-        checks.append(("Synthesis Gateway", "PASS", "NOTEBOOKLM_AUTH_JSON configured."))
-    elif master_token_file.exists():
-        checks.append(("Synthesis Gateway", "PASS", f"Master token file found: {master_token_file}"))
-    else:
-        checks.append(("Synthesis Gateway", "WARN", "No synthesis credentials found (NOTEBOOKLM_AUTH_JSON or master_token.json)."))
+    # 4. Gemini Notebook
+    try:
+        checks.append(("Gemini Notebook", "PASS", check_notebook_auth()))
+    except Exception as exc:  # any failure to authenticate is a FAIL, not a crash
+        checks.append(("Gemini Notebook", "FAIL", f"Auth check failed: {exc}"))
+    if os.getenv("NOTEBOOKLM_AUTH_JSON"):
+        checks.append((
+            "Gemini Notebook",
+            "WARN",
+            "NOTEBOOKLM_AUTH_JSON is set; it overrides the profile master token. Unset it.",
+        ))
 
     # Format output
     try:
