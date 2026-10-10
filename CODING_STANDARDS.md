@@ -10,6 +10,11 @@ Review standards for research-toolkit changes. Enforced during code review.
 - **Aggregator Resilience**: Public search engines (Semantic Scholar, OpenAlex) are prone to rate limits (HTTP 429) and bursts. Calls to external sources must degrade gracefully (warn and continue with available providers) rather than terminating the entire pipeline.
 - **Mathematical Specification Precision**: Algorithmic rules for composite ranking, recency decay, and diversity penalties must specify exact piecewise mathematical definitions to prevent interpretation drift.
 
+## External Writes & Recovery
+
+- **Partial-success contracts**: Review failure reporting and restart behavior across every external write stage, including post-write verification. An error response is not proof that nothing was written; recovery must distinguish confirmed, uncertain and completed effects before retrying or deleting.
+- **Capacity under eventual consistency**: Review capacity, ownership and cleanup together. Account for uncertain writes and stale reads; a successful delete and a failed delete must not be conflated. Test new mechanical regressions at the public seam rather than adding reminder-only steering rules.
+
 ## Zotero Domain Invariants
 
 - **Personal Library Scope**: Endpoints must strictly target `/users/<user_id>/`. Group libraries are prohibited (see ADR-0002).

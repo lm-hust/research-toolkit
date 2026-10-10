@@ -28,7 +28,7 @@ Report fields:
 - `replaced[]`, `skipped_existing[]`, `renamed[]` (titles the server reset to the filename and the run renamed back).
 - `missing_fulltext[]`: items with nothing to upload; the user needs to add a full text in Zotero (or rerun with `--allow-url`).
 - `orphaned[]` (`key`, `title`, `source_id`): sources in the notebook that are not in the given collections. Reported only, never deleted.
-- `failed[]` (`key`, `title`, `error`): rerun to retry upload or readiness failures. Title-check failures (immediate or final) also carry `source_id`; the upload may already be in `added[]`. Inspect that source in the notebook before retrying, since a title left as a filename cannot be matched by key and may cause a duplicate upload. Have the user restore its `[KEY] Title` in the web UI.
+- `failed[]` (`key`, `title`, `error`): rerun to retry upload or readiness failures. If an unconfirmed upload is not yet visible, the toolkit refuses a blind retry and blocks later uploads until its capacity can be reconciled; inspect the notebook before retrying to avoid duplicates. Title-check failures (immediate or final) also carry `source_id`; the upload may already be in `added[]`. Inspect that source in the notebook before retrying, since a title left as a filename cannot be matched by key and may cause a duplicate upload. Have the user restore its `[KEY] Title` in the web UI.
 - `extra_attachments[]` (`key`, `title`, `count`): items with more attachments than the one uploaded (supplements were not synced).
 - `source_count`, `projected_source_count`: sources now, and after this run.
 

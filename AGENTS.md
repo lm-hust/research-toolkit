@@ -13,5 +13,6 @@
 - Coding standards: see `CODING_STANDARDS.md`.
 - Domain docs: single-context (`CONTEXT.md` + `docs/adr/`). See `docs/agents/domain.md`.
 - Issue tracker: GitHub issues via `gh` CLI. See `docs/agents/issue-tracker.md`.
+- Integration, review follow-ups, or PR readiness: see `docs/agents/delivery.md`.
 - Verification: `./scripts/check.sh` (wired to `.githooks/pre-commit` via `core.hooksPath`).
-- Skill sync: run `./scripts/sync-skills.sh` after editing skills under `skills/`.
+- Skill edits, trials or publication: see `docs/agents/skill-publication.md`; sync only selected skills to an explicit target.

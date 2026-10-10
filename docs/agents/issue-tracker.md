@@ -11,6 +11,10 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
+## Acceptance records
+
+Use `.github/ISSUE_TEMPLATE/implementation.md` and the PR template to distinguish automated verification, live service checks, and human acceptance. Passed gates link actual evidence for the applicable commit; pending gates remain pending until completed or explicitly waived by the user. See [delivery.md](delivery.md) for readiness validation and review ledgers. Keep confidential source content out of tracker records.
+
 ## Wayfinding operations
 
 Used by `/wayfinder`. The **map** is a single issue with **child** issues as tickets.

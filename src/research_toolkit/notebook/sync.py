@@ -224,6 +224,7 @@ class _Uploader:
         self.progress = progress
         self.known_ids = known_ids  # sources not left behind by the upload in progress
         self.deleted_ids: set[str] = set()  # confirmed deletes may linger in stale listings
+        self.unresolved_uploads: set[tuple[str, str]] = set()  # filename/title of unseen uncertain writes
         self.uploaded: dict[str, ZoteroItem] = {}  # source id -> item, added in this run
 
     def source_deleted(self, source_id: str) -> None:
@@ -240,10 +241,17 @@ class _Uploader:
         try:
             # Reconcile before each upload: an uncertain write may have left a source
             # even when its residue cleanup failed. Retain known IDs to tolerate lagging lists.
-            self.known_ids.update(
-                src.id for src in await self.client.sources.list(self.notebook_id)
-                if src.id not in self.deleted_ids
-            )
+            visible = await self.client.sources.list(self.notebook_id)
+            new_sources = [
+                src for src in visible if src.id not in self.known_ids and src.id not in self.deleted_ids
+            ]
+            self.unresolved_uploads = {
+                target for target in self.unresolved_uploads
+                if not any(src.title in target for src in new_sources)
+            }
+            self.known_ids.update(src.id for src in visible if src.id not in self.deleted_ids)
+            if self.unresolved_uploads:
+                raise SyncError("Earlier unconfirmed upload is still invisible; inspect the notebook before retrying.")
             if len(self.known_ids) >= SOURCE_LIMIT:
                 raise SyncError(
                     f"The notebook already holds {len(self.known_ids)} sources; "
@@ -332,15 +340,21 @@ class _Uploader:
     async def _clean_residue(self, filename: str, wanted: str) -> Optional[Source]:
         """Deletes new non-ready sources left by a failed upload; returns one that did land."""
         landed = None
+        observed = False
+        self.unresolved_uploads.add((filename, wanted))
         for source in await self.client.sources.list(self.notebook_id):
             if source.id in self.known_ids or source.id in self.deleted_ids or source.title not in (filename, wanted):
                 continue
+            observed = True
             self.known_ids.add(source.id)
+            self.unresolved_uploads.discard((filename, wanted))
             if source.is_ready and landed is None:
                 landed = source
             else:
                 await self.client.sources.delete(self.notebook_id, source.id)
                 self.source_deleted(source.id)
+        if not observed:
+            raise SyncError("Unconfirmed upload is not yet visible; refusing a duplicate retry until it is reconciled.")
         return landed
 
     async def _ensure_title(self, source: Source, item: ZoteroItem) -> None:

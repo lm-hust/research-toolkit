@@ -1,79 +1,68 @@
 ---
 name: whoami
-description: Drafts from the user's own track record in the Identity Notebook. Use when the user asks for a grant "研究基础" section, a bio or 个人简介, a talk title and abstract (报告选题/摘要), application form fields (代表性成果, 项目清单), a paper list or count of their own work, or a project and award list.
+description: Evidence-backed research identity from the Identity Notebook. Use for 科研标签/研究定位, a grant 研究基础 section, a bio, talk title/abstract, application form fields, the user's paper list/count, or project and award list.
 ---
 
 # whoami
 
-The **Identity Notebook** is the Gemini Notebook titled `Identity`: the user's own papers, grant proposals and handwritten statements, curated by hand. Every draft here is built from it, and every claim in a draft is either backed by a source in it or marked ⚠.
+The **Identity Notebook** holds the user's papers, applications and direction/contribution materials. Choose the research-positioning branch for labels; choose the drafting branch for a formal deliverable. Both follow the evidence rules below.
 
-## Queries
+## Queries and confidentiality
 
-Every command follows the `gemini-notebook` skill: its "Running commands" prefix, step 1 to pin the notebook (exact title `Identity`, full UUID, `-n <UUID>` on every command) and step 5 to map `[n]` to source titles. Load it first if it is not already loaded.
+Load `gemini-notebook` first. Pin the exact title `Identity`, retain its full UUID, and use `-n <UUID>` on every command. Source IDs come from that notebook's own list.
 
-On Identity the agent is a reader:
-
-- **Sources are read-only.** Identity changes only by the user's hand. Anything meant for Identity (such as the project and award list) goes to the user, who adds it.
-- **One conversation.** Every `ask` continues Identity's current conversation, the one the user keeps on the web: the first `ask` goes without `-c`, then every later one passes `-c <conversation_id>` from that first answer. `--new` deletes that conversation, so it never appears on Identity, even when a fresh start would help; narrow with `-s <source_id>` instead.
-- **Confidential.** Identity holds unpublished application material. Drafts and evidence go to the chat or to a path the user names, never into a git repository, issue or PR.
+- **Read-only sources.** The user curates Identity. Material intended for it goes to the user to add.
+- **One conversation.** The first `ask` omits `-c` to continue the existing web conversation; follow-ups use its returned conversation ID. Identity never uses `--new`. Narrow with `-s` instead.
+- **Confidential.** Evidence and drafts stay in chat or a user-named private path, never in the repository, issue or PR. Acceptance records contain procedural results only.
 
 ## Evidence rules
 
-**Lists and counts come from titles.** Any paper list or count ("近五年论文", "how many first-author papers") is a count over `source list` titles, never an `ask` answer: `ask` drops items from lists. Paper sources are titled `作者 - 年份 - 标题`; filter by the year and author fields, and report the count with the filter used. A title that does not fit the pattern is listed for the user to classify, not guessed.
+**Authority is established, not inferred.** Classify source contents as paper original, user-confirmed self-statement, application (status/results versus plan), generated synthesis, or unclassified. A title such as “研究贡献”, a Markdown file, or inclusion in Identity establishes none of these identities. Confirm ambiguous provenance with the user. Generated syntheses are discovery aids: follow their claims to originals, not their internal citation numbers as if verified.
 
-**Achievements need a state.** A claim counts as an achievement only when it appears in one of:
+**Achievements need evidence and a role.** Support them with a paper original, a user-confirmed contribution statement, or a project status line marking 在研/结题 and the user as 主持. Check authorship and contribution passages before attributing a paper's result to the user; being in Identity is not proof of authorship, first authorship, leadership or sole contribution. Quantitative results, priority claims, awards and project status require primary evidence; self-statements do not substitute for missing status records. Applications' research plans, expected outcomes and targets remain plans.
 
-1. a paper source;
-2. a contribution statement the user wrote by hand;
-3. a status line of an application that marks the project 在研 or 结题 with the user as 主持.
+**Lists and counts come from titles.** Count the `作者 - 年份 - 标题` paper-source pattern from `source list`, with the year/author filter stated. Call these paper-source counts until publication status and the user's authorship are verified. First-author counts additionally require the author's identity to be established from the original, not inferred from a title's “et al.”. Unmatched titles remain unclassified until checked.
 
-`ask` presents plans as results. A claim whose only support is an application's research plan, expected outcomes or performance targets (研究计划, 预期成果, 考核指标) is a plan, not an achievement, and carries ⚠.
+**⚠ marking.** Put the marker before the claim and the reason after it:
+- `⚠ … [计划/考核指标: <source title>]`
+- `⚠ … [未核实]`
+- `⚠ … [状态不明: <source title>]`
+- `⚠ … [来源身份/个人角色待确认: <source title>]`
 
-**⚠ marking.** Put `⚠` before the claim and the reason in brackets after it, so the user can check each one:
+**Inventory economy.** Parse `source list` once; retain its ID/title mapping privately. Show relevant candidates and title-derived counts, rather than dumping the whole library. The checkout provides `scripts/notebook_inventory.py --match '<title regex>'` to filter piped JSON; matching titles identifies candidates, not authoritative self-statements. When classifying a full inventory, assign every source to exactly one category, including unclassified.
 
-- `⚠ … [计划/考核指标: <source title>]`: support is a plan or target only.
-- `⚠ … [未核实]`: `ask` said it, `source search` found no passage.
-- `⚠ … [状态不明: <source title>]`: found, but no line gives its status or the user's role.
+## Research positioning: 科研标签 / 研究定位
 
-## Steps
+This branch helps discover a direction; it does not require the user to know or confirm it before receiving candidates.
 
-### 1. Inventory the sources
+1. Inventory relevant papers and direction materials. Check provenance; find recurring themes across paper originals with `source search`. Use a source-scoped `ask` only when synthesis is needed, announcing its 1–1.5 minute cost.
+2. Give one provisional umbrella label and 3–5 supporting labels. For each, name its scope, paper evidence and whether it reflects existing work or a future agenda. Distinguish published/results material from plans and unverified publication status. Mark your label wording as **agent synthesis**, not a quotation.
+3. Explain the boundaries: distinguish methods, application domains and scientific questions. Extend earlier work into a new umbrella only as an interpretation, not proof that all earlier papers studied that umbrella. Ask which labels the user endorses or wants to adjust.
 
-Pin Identity, then run `source list`. Sort every title into papers (by the `作者 - 年份 - 标题` pattern), applications, handwritten statements, and other.
+Done when: candidates answer the question, each has original evidence or ⚠, and future agenda is separate from established work. A label discussion is not acceptance of a formal research-foundation draft.
 
-Done when: every source sits in exactly one group, and you have the paper count by year.
+## Formal drafting
 
-### 2. Confirm the research direction
+### 1. Inventory and establish authority
 
-Find the user's handwritten direction statement in the inventory and read it with `source search` on its key terms (`-s <source_id>`). From it, write the direction in one sentence and split it into the 3–5 themes the draft will be organised around. Show both to the user.
+Classify the inventory using the evidence rules, retain the title-derived paper count by year and inspect relevant ambiguous sources.
 
-Done when: the user has said yes to the direction and the theme list, or given their own. Nothing is drafted before that.
+Done when: every source in scope has a category; authoritative self-statements and the user's relevant roles are verified or explicitly pending.
 
-### 3. Gather evidence with ask
+### 2. Confirm direction and format
 
-One `ask` per theme, in the conversation from the Queries section. Tell the user each takes 1–1.5 minutes before sending. Open each question with the confirmed direction and this grounding: answer only from the notebook's sources, write "来源中未找到" where there is none, and give each item's status (published / 在研 / 结题 / planned) and the user's role. Keep each answer's `references[]`.
+Read a user-confirmed direction statement with `source search`; propose one direction sentence and 3–5 themes. If none exists, use research positioning first. Ask for the target length and headings.
 
-Done when: every theme has an answer and its references mapped to source titles.
+Done when: the user confirms the direction, themes and format. Formal drafting waits for this confirmation.
 
-### 4. Verify with source search
+### 3. Gather evidence
 
-For every claim that will reach the draft, run `source search` on its key terms (the ~5 s search writes nothing). Keep the matching source title and `cited_text`. Apply the evidence rules: a claim with a passage from a paper, a handwritten statement or a 在研/结题 status line stands; every other claim takes its ⚠.
+One `ask` per confirmed theme, continuing the conversation. Announce each 1–1.5 minute query. Ask for source-grounded results, status (published / 在研 / 结题 / planned), the user's role, and “来源中未找到” for missing evidence. Map every reference to its source title.
 
-Done when: every claim has either a verifying passage or a ⚠.
+Done when: every theme has mapped evidence; claims from generated material remain leads, not facts.
 
-### 5. Draft
+### 4. Verify and draft
 
-Claude writes the deliverable in its target format (see [`references/deliverables.md`](references/deliverables.md)). Each claim ends with its provenance: the source title, plus the `cited_text` when the wording matters. Paper lists and counts come from step 1 alone. Below the draft, list every ⚠ claim for the user to resolve.
+For each factual claim, use `source search` to retain the original passage and check the user's role. Apply ⚠ to unresolved claims. Write the requested format with provenance on each factual sentence and a separate list of ⚠ items. See `references/deliverables.md` for research-foundation sections, talks, forms and project/award lists.
 
-Done when: every sentence that states a fact has a source title or a ⚠.
-
-## Deliverables
-
-| The user wants | Shape |
-|---|---|
-| 研究基础 section | all five steps |
-| 报告选题与摘要 | steps 1–4 on the talk's topic, then candidate titles and an abstract |
-| form fields (个人简介, 代表性成果, 项目清单) | steps 1–4 per field, filled in the form's order |
-| project and award list | the list workflow in the reference |
-
-Formats, and the project and award list workflow: [`references/deliverables.md`](references/deliverables.md).
+Done when: every factual sentence has verifying provenance or ⚠, and the user can distinguish their established results from plans and agent interpretation.

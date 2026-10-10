@@ -27,6 +27,13 @@ before running) and consult it inside the API method the behaviour belongs to. E
 - `unconfirmed_uploads`: {substring of the requested title: how many add_file attempts fail}.
   Each failing attempt raises a NotebookLMError whose `.unconfirmed` is True and leaves a
   PREPARING residue titled with the filename, as UNCONFIRMED_WRITE does.
+- `committed_uploads` / `committed_deletes`: {title substring: attempts whose write succeeds
+  but response is lost}. File uploads land ready; deletion removes the source before raising.
+- `delete_errors`: {title substring: exception}; the failed deletion changes nothing.
+- `upload_visibility_delay` / `deletion_visibility_delay`: listing calls hiding a new upload
+  or retaining a deleted snapshot. Listings are independent snapshots, not aliases into state.
+- `peak_source_counts`: maximum actual count per notebook, including hidden sources. Combine
+  these knobs through the CLI in test_notebook_fault_matrix.py; do not assert private call order.
 - `processing_timeouts`: substrings of titles whose source never becomes ready:
   wait_until_ready raises SourceTimeoutError with the requested timeout.
 - `answers`: {source id: (answer text, [ChatReference])} returned by chat.ask when the ask is
@@ -46,6 +53,7 @@ its history. Arrange one with `start_conversation(nb_id, [(q, a), ...])`; read
 
 from __future__ import annotations
 
+import copy
 import datetime
 import itertools
 import uuid
@@ -116,7 +124,20 @@ class FakeSourcesAPI:
         self._fake = fake
 
     async def list(self, notebook_id: str) -> list[Source]:
-        return list(self._fake.state[notebook_id].sources)
+        # Return snapshots: later mutations must not retroactively change an earlier listing.
+        visible: list[Source] = []
+        for source in self._fake.state[notebook_id].sources:
+            hidden = self._fake.hidden_sources.get(source.id, 0)
+            if hidden:
+                self._fake.hidden_sources[source.id] = hidden - 1
+            else:
+                visible.append(copy.deepcopy(source))
+        stale = self._fake.stale_sources.get(notebook_id, [])
+        self._fake.stale_sources[notebook_id] = [
+            (source, left - 1) for source, left in stale if left > 1
+        ]
+        visible.extend(copy.deepcopy(source) for source, left in stale if left > 0)
+        return visible
 
     async def add_file(
         self,
@@ -139,11 +160,11 @@ class FakeSourcesAPI:
         for needle, remaining in self._fake.unconfirmed_uploads.items():
             if needle in wanted and remaining > 0:
                 self._fake.unconfirmed_uploads[needle] = remaining - 1
-                self._fake.new_source(notebook_id, path.name, status=SourceStatus.PREPARING)
+                self._fake.land_source(notebook_id, path.name, status=SourceStatus.PREPARING)
                 raise _UnconfirmedUpload("Android file upload failed during start")
         reset = next((v for n, v in self._fake.title_resets.items() if n in wanted), None)
         processing = any(n in wanted for n in self._fake.processing_timeouts)
-        src = self._fake.new_source(
+        src = self._fake.land_source(
             notebook_id,
             path.name if reset == "immediate" else wanted,
             status=SourceStatus.PROCESSING if processing else SourceStatus.READY,
@@ -152,6 +173,10 @@ class FakeSourcesAPI:
             self._fake.late_resets[src.id] = path.name
         self._fake.uploaded_paths.append(path)
         self._fake.uploaded_contents.append(path.read_bytes())
+        for needle, remaining in self._fake.committed_uploads.items():
+            if needle in wanted and remaining > 0:
+                self._fake.committed_uploads[needle] = remaining - 1
+                raise _UnconfirmedUpload("Upload committed but response was lost")
         return Source(id=src.id, title=wanted, status=src.status)
 
     async def wait_until_ready(
@@ -176,8 +201,19 @@ class FakeSourcesAPI:
 
     async def delete(self, notebook_id: str, source_id: str) -> None:
         self._fake.writes.append(("delete_source", notebook_id, source_id))
+        source = self._fake.source(notebook_id, source_id)
+        for needle, error in self._fake.delete_errors.items():
+            if needle in (source.title or ""):
+                raise error
         sources = self._fake.state[notebook_id].sources
         sources[:] = [s for s in sources if s.id != source_id]
+        delay = self._fake.deletion_visibility_delay
+        if delay:
+            self._fake.stale_sources.setdefault(notebook_id, []).append((copy.deepcopy(source), delay))
+        for needle, remaining in self._fake.committed_deletes.items():
+            if needle in (source.title or "") and remaining > 0:
+                self._fake.committed_deletes[needle] = remaining - 1
+                raise _UnconfirmedUpload("Delete committed but response was lost")
 
     async def add_url(
         self,
@@ -192,7 +228,7 @@ class FakeSourcesAPI:
         for needle, error in self._fake.upload_errors.items():
             if needle in (title or url):
                 raise error
-        return self._fake.new_source(notebook_id, title or url)
+        return self._fake.land_source(notebook_id, title or url)
 
 
 class FakeChatAPI:
@@ -299,6 +335,14 @@ class FakeNotebookClient:
         self.note_errors: Exception | None = None
         self.title_resets: dict[str, str] = {}
         self.unconfirmed_uploads: dict[str, int] = {}
+        self.committed_uploads: dict[str, int] = {}  # successful upload, lost response
+        self.committed_deletes: dict[str, int] = {}  # successful deletion, lost response
+        self.delete_errors: dict[str, Exception] = {}  # title substring, no deletion
+        self.upload_visibility_delay = 0  # listing calls before an upload becomes visible
+        self.deletion_visibility_delay = 0  # listing calls retaining a deleted snapshot
+        self.hidden_sources: dict[str, int] = {}
+        self.stale_sources: dict[str, list[tuple[Source, int]]] = {}
+        self.peak_source_counts: dict[str, int] = {}
         self.processing_timeouts: set[str] = set()
         self.late_resets: dict[str, str] = {}  # source id -> filename, pending a late reset
         self.quota_remaining_percent = 100.0
@@ -326,7 +370,18 @@ class FakeNotebookClient:
     ) -> Source:
         src = Source(id=f"src-{next(self._ids)}", title=title, status=status)
         self.state[notebook_id].sources.append(src)
+        self.peak_source_counts[notebook_id] = max(
+            self.peak_source_counts.get(notebook_id, 0), len(self.state[notebook_id].sources)
+        )
         return src
+
+    def land_source(
+        self, notebook_id: str, title: str, status: SourceStatus = SourceStatus.READY
+    ) -> Source:
+        """An API upload, potentially hidden from the next few listings."""
+        source = self.new_source(notebook_id, title, status)
+        self.hidden_sources[source.id] = self.upload_visibility_delay
+        return source
 
     def next_id(self, prefix: str) -> str:
         return f"{prefix}-{next(self._ids)}"
