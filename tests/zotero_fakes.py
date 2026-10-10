@@ -6,6 +6,7 @@ from memory, plus a temporary storage dir holding the attachment files.
 Usage:
     lib = FakeZoteroLibrary(tmp_dir)
     col = lib.add_collection("intelligence-per-kwh")
+    sub = lib.add_collection("pue", parent=col)          # subcollection, for --recursive
     lib.add_paper(col, "K1", "Paper one", pdf=True)
     with patch("research_toolkit.cli.ZoteroManager", lib.manager):
         ...
@@ -36,9 +37,13 @@ class FakeZoteroLibrary(ZoteroClient):
         raise AssertionError(f"unexpected Zotero HTTP call: {args} {kwargs}")
 
     # --- arrange helpers -------------------------------------------------
-    def add_collection(self, name: str, key: Optional[str] = None) -> str:
+    def add_collection(
+        self, name: str, key: Optional[str] = None, parent: Optional[str] = None
+    ) -> str:
         key = key or f"COL{len(self.collections):05d}"
-        self.collections[key] = ZoteroCollection(key=key, name=name, user_id=self.user_id)
+        self.collections[key] = ZoteroCollection(
+            key=key, name=name, parent_collection=parent, user_id=self.user_id
+        )
         self.rows[key] = []
         return key
 
@@ -118,6 +123,9 @@ class FakeZoteroLibrary(ZoteroClient):
             if col.key == key_or_name or col.name.lower() == key_or_name.lower():
                 return col
         return None
+
+    def get_subcollections(self, collection_key: str) -> List[ZoteroCollection]:
+        return [c for c in self.collections.values() if c.parent_collection == collection_key]
 
     def get_collection_items(self, collection_key: str, limit: int = 100) -> List[Dict[str, Any]]:
         return list(self.rows[collection_key])

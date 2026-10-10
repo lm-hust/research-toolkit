@@ -9,6 +9,10 @@ Usage:
         ...run the command...
     fake.source_titles(nb_id); fake.writes
 
+Every write is logged in `fake.writes`: ("create_notebook", title),
+("add_file", nb_id, title, filename), ("rename_source", nb_id, source_id, new_title),
+("delete_source", nb_id, source_id).
+
 The fake returns the real `notebooklm.Notebook` / `notebooklm.Source` dataclasses so code
 under test sees the same attribute shapes as in production.
 
