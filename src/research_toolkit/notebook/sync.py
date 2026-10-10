@@ -25,7 +25,7 @@ from notebooklm import Notebook, NotebookLMError, Source
 from research_toolkit.notebook import client as notebook_client
 from research_toolkit.notebook.client import NotebookClient
 from research_toolkit.notebook.fulltext import URL_KIND, upload_target
-from research_toolkit.notebook.plan import SyncPlan, plan_sync
+from research_toolkit.notebook.plan import SOURCE_LIMIT, SyncPlan, plan_sync
 from research_toolkit.notebook.resolve import NotebookResolutionError, find_notebook
 from research_toolkit.notebook.titles import source_key, source_title
 from research_toolkit.zotero.manager import ZoteroManager
@@ -157,7 +157,7 @@ async def _sync_items(
             notebook = await find_notebook(client, notebook_ref, default_title)
         except NotebookResolutionError as e:
             raise SyncError(str(e)) from e
-        if notebook is not None and notebook.title == "Identity":
+        if (notebook.title if notebook is not None else default_title) == "Identity":
             raise SyncError("Identity is maintained by hand and must never receive Zotero syncs.")
         sources = await client.sources.list(notebook.id) if notebook else []
         plan = plan_sync(items, sources, replace_keys=replace, force=force, allow_url=allow_url)
@@ -191,6 +191,7 @@ async def _sync_items(
                 for old in planned.replaces:
                     progress(f"Deleting old source {old.title} ({old.id}) for --replace")
                     await client.sources.delete(notebook.id, old.id)
+                    uploader.known_ids.discard(old.id)
                     report["replaced"].append(_source_entry(old))
             except Exception as e:
                 progress(f"  failed: {e}")
@@ -226,17 +227,28 @@ class _Uploader:
         """Upload -> wait until ready -> fix the title. Any failure goes to `failed`."""
         self.progress(f"Uploading [{item.key}] ({kind}) {item.title[:60]}")
         wanted = source_title(item.key, item.title)
+        source: Optional[Source] = None
+        checking_title = False
         try:
+            if len(self.known_ids) >= SOURCE_LIMIT:
+                raise SyncError(
+                    f"The notebook already holds {len(self.known_ids)} sources; "
+                    f"the limit is {SOURCE_LIMIT}. Planned replacement capacity was not freed."
+                )
             with upload_target(item, kind) as target:
                 source = await self._add(target, wanted, is_url=kind == URL_KIND)
             self.known_ids.add(source.id)
             ready = await self.client.sources.wait_until_ready(
                 self.notebook_id, source.id, timeout=READY_TIMEOUT
             )
+            checking_title = True
             await self._ensure_title(ready, item)
         except Exception as e:  # one paper failing must not stop the run
             self.progress(f"  failed: {e}")
-            self.report["failed"].append({**_entry(item), "error": str(e)})
+            failure = {**_entry(item), "error": f"Title check: {e}" if checking_title else str(e)}
+            if source is not None:
+                failure["source_id"] = source.id
+            self.report["failed"].append(failure)
             return
         self.uploaded[source.id] = item
         self.report["added"].append({**_entry(item), "kind": kind})

@@ -1,8 +1,8 @@
 # Research Toolkit 🔬
 
-> 面向学术研究者的高效文献检索、Zotero 个人文库联动与 Google NotebookLM 证据提炼工具链。
+> 面向学术研究者的高效文献检索、Zotero 个人文库联动与 Gemini Notebook 证据提炼工具链。
 
-`research-toolkit` 专为现代化科研工作流设计，无缝串联 **学术文献多源检索**、**顶刊顶会智能排序**、**Zotero 个人文库本地管理（绕过云配额）** 以及 **Google NotebookLM 逐字溯源问答**。
+`research-toolkit` 专为现代化科研工作流设计，无缝串联 **学术文献多源检索**、**顶刊顶会智能排序**、**Zotero 个人文库本地管理（绕过云配额）** 以及 **Gemini Notebook 来源溯源问答**。
 
 ---
 
@@ -22,8 +22,9 @@
   - 持久化规范化标准 DOI（`https://doi.org/{doi}`）。
   - 直接探测本地磁盘目录（`~/Zotero/storage/<key>/*.pdf`），彻底规避 Zotero 云端 300MB 免费配额限制。
   - 自动消解 Zotero Connector 抓取造成的重复条目，智能合并标签并采用带 PDF 的条目。
-- **NotebookLM 网关**：
-  - 支持持久化安卓主令牌（`master_token.json`）与单行环境变量（`NOTEBOOKLM_AUTH_JSON`），便于跨 VPS 极简迁移。
+- **Gemini Notebook 同步与批量初读**：
+  - 使用持久化安卓主令牌（`master_token.json`），通过 `sync-notebook` 同步全文、`skim-notebook` 写入 Zotero 初读 note。
+  - 单次查询由 `gemini-notebook` skill 直接调用上游 CLI；Identity 由用户手动维护，使用 `whoami` skill 取证和起草。
 - **MCP (Model Context Protocol) 原生就绪**：
   - 提供标准 JSON-Schema 清单，可无缝接入 Claude Desktop、Cursor 等支持 MCP 的智能代理。
 
@@ -55,14 +56,14 @@ ZOTERO_LIBRARY_TYPE=user
 # 本地 PDF 存储路径（通常为 ~/Zotero/storage）
 ZOTERO_STORAGE_DIR=/home/ling/Zotero/storage
 
-# --- Google NotebookLM 网关 ---
+# --- Gemini Notebook 认证 ---
 # Android master token，存放在 ~/.notebooklm/profiles/default/master_token.json
 # （由 scripts/setup_notebooklm.sh 写入）。不要设置 NOTEBOOKLM_AUTH_JSON：它只接受浏览器 cookie 登录状态。
 NOTEBOOKLM_BACKEND=android
 ```
 
 > 💡 **快速配置向导**：
-> 针对无图形界面的远程 Linux 服务器，直接运行交互式向导即可安全设置 NotebookLM 凭证：
+> 针对无图形界面的远程 Linux 服务器，直接运行交互式向导即可安全设置 Gemini Notebook 凭证：
 > ```bash
 > ./scripts/setup_notebooklm.sh
 > ```
@@ -82,7 +83,7 @@ PYTHONPATH=src python3 -m research_toolkit.cli doctor
 
 ```
 [1. search] ──────► [2. checkpoint] ──────► [3. sync-notebook]
- 文献检索与排序        本地 PDF 查缺补漏         创建 NotebookLM 并同步
+ 文献检索与排序        本地 PDF 查缺补漏         创建 Gemini Notebook 并同步
 ```
 
 ### 阶段 1：文献检索与智能排序 (`search`)
@@ -117,7 +118,7 @@ PYTHONPATH=src python3 -m research_toolkit.cli checkpoint --status
 
 ### 阶段 3：创建研读笔记本并同步来源 (`sync-notebook`)
 
-把一个 Zotero collection 的全文增量同步到 Gemini Notebook（NotebookLM）：
+把一个 Zotero collection 的全文增量同步到 Gemini Notebook：
 
 ```bash
 # 默认使用与 collection 同名的笔记本，不存在就新建
@@ -139,9 +140,11 @@ uv run research-toolkit sync-notebook -c 度电智能 -c 数据中心 --recursiv
 uv run research-toolkit sync-notebook --collection intelligence-per-kwh --replace ABCD1234
 ```
 - 每个条目只取第一个 PDF；没有 PDF 时依次用 EPUB、Zotero 网页快照（本地转成 markdown 上传），都没有则列入 `missing_fulltext`。其余附件数记入 `extra_attachments`。
-- 每个来源标题为 `[Zotero条目key] 论文标题`；已存在 `[key]` 的条目跳过，重跑即可续传。
+- 每个来源标题为 `[Zotero条目key] 论文标题`；已 ready 的 `[key]` 来源跳过，尚在处理的来源会继续等待，失败列入报告而不重复上传。
+- 标题核对失败时，报告保留 `source_id`，来源可能已上传。先在网页中将该来源恢复为 `[key] 论文标题`，再重跑，避免重复上传。
 - 上传前先算计划：新增、已存在、缺全文（`--allow-url` 下有 DOI/URL 的条目算作新增）、`orphaned`（笔记本里有、输入里没有；只报告，从不删除）。
-- 已有来源数 + 新增数超过 300 时一篇都不传；目标笔记本中大部分来源没有 `[key]` 标题（手动维护）时拒绝写入，除非加 `--force`。两种情况都在报告的 `aborted_reason` 中说明。
+- 计划中的来源总数超过 300 时一篇都不传；若替换删除失败，后续上传也不会占用未实际释放的容量。目标笔记本中大部分来源没有 `[key]` 标题（手动维护）时拒绝写入，除非加 `--force`。预检停止的原因在 `aborted_reason` 中说明。
+- **Identity 永远不接受同步**，即使使用 `--force` 或 UUID；也不会根据同名 collection 创建 Identity。
 - stdout 只输出 JSON 报告（`notebook_id`、`notebook_title`、`created`、`dry_run`、`aborted_reason`、`added`（含 `kind`：pdf/epub/html/url）、`replaced`、`skipped_existing`、`missing_fulltext`、`orphaned`、`failed`、`extra_attachments`、`source_count`、`projected_source_count`），进度走 stderr。
 
 ---
@@ -230,6 +233,6 @@ claude.ai 的自定义连接器无法设置自定义请求头，因此把密钥�
 
 所有核心模块均由测试驱动开发（TDD）构建：
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests
+./scripts/check.sh
 ```
-覆盖多源检索限流、三级级联去重、分层排序、顶刊顶会映射、Zotero 个人文库、本地 PDF 探测及 NotebookLM 双适配器等 41 项自动化测试。
+统一运行 ruff、mypy 与 pytest，覆盖文献发现工作流、Zotero 个人文库与全文解析、Gemini Notebook 同步和批量初读，以及冻结网关的剩余接口。
