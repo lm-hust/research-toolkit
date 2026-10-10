@@ -24,9 +24,7 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from research_toolkit.mcp.tools import (
-    ask_notebook,
     search_literature,
-    sync_notebook,
     verify_checkpoint,
 )
 
@@ -50,18 +48,6 @@ class SearchLiteratureRequest(BaseModel):
 
 class VerifyCheckpointRequest(BaseModel):
     collection: str = Field(..., description="Target Zotero collection name or key to inspect")
-
-
-class SyncNotebookRequest(BaseModel):
-    collection: str = Field(..., description="Target Zotero collection name or key")
-    allow_partial: bool = Field(
-        False, description="Proceed with upload even if some PDFs are missing on disk"
-    )
-
-
-class AskNotebookRequest(BaseModel):
-    query: str = Field(..., description="The synthesis question or research prompt")
-    notebook_id: str = Field(..., description="Target Google NotebookLM notebook ID")
 
 
 # ---------------------------------------------------------------------------
@@ -163,20 +149,6 @@ def create_fastmcp_server() -> FastMCP:
     def mcp_verify_checkpoint(collection: str) -> Dict[str, Any]:
         return verify_checkpoint(collection=collection)
 
-    @mcp.tool(
-        name="sync_notebook",
-        description="Uploads ready PDF attachments from Zotero into Google NotebookLM.",
-    )
-    def mcp_sync_notebook(collection: str, allow_partial: bool = False) -> Dict[str, Any]:
-        return sync_notebook(collection=collection, allow_partial=allow_partial)
-
-    @mcp.tool(
-        name="ask_notebook",
-        description="Executes source-grounded questions against NotebookLM and returns verbatim evidence.",
-    )
-    def mcp_ask_notebook(query: str, notebook_id: str) -> Dict[str, Any]:
-        return ask_notebook(query=query, notebook_id=notebook_id)
-
     return mcp
 
 
@@ -202,7 +174,7 @@ def create_app() -> FastAPI:
         title="Research Toolkit Dual-Stack Gateway",
         description=(
             "Dual-stack MCP and OpenAPI REST gateway for literature discovery, "
-            "Zotero library synchronization, and Google NotebookLM synthesis."
+            "and Zotero library synchronization."
         ),
         version="0.1.0",
         docs_url="/docs",
@@ -253,28 +225,6 @@ def create_app() -> FastAPI:
     async def api_verify_checkpoint(req: VerifyCheckpointRequest) -> Dict[str, Any]:
         """Scans Zotero collection for local and cloud full-text attachments."""
         return verify_checkpoint(collection=req.collection)
-
-    @app.post(
-        "/api/v1/sync-notebook",
-        tags=["NotebookLM Synthesis"],
-        summary="Sync PDFs to NotebookLM",
-        response_model=Dict[str, Any],
-        dependencies=[Depends(verify_auth_token)],
-    )
-    async def api_sync_notebook(req: SyncNotebookRequest) -> Dict[str, Any]:
-        """Uploads ready PDF attachments from Zotero collection to Google NotebookLM."""
-        return sync_notebook(collection=req.collection, allow_partial=req.allow_partial)
-
-    @app.post(
-        "/api/v1/ask",
-        tags=["NotebookLM Synthesis"],
-        summary="Ask Grounded Synthesis Question",
-        response_model=Dict[str, Any],
-        dependencies=[Depends(verify_auth_token)],
-    )
-    async def api_ask_notebook(req: AskNotebookRequest) -> Dict[str, Any]:
-        """Queries NotebookLM notebook and extracts verbatim quoted evidence."""
-        return ask_notebook(query=req.query, notebook_id=req.notebook_id)
 
     # 3. MCP Streamable HTTP at an exact path (no Mount, so no trailing-slash redirect).
     #    Registered before the /mcp mount so it is matched first.

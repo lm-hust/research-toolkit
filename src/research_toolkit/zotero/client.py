@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -17,6 +18,10 @@ from research_toolkit.discovery.dedup import Deduplicator
 from research_toolkit.zotero.models import ZoteroCollection
 
 logger = logging.getLogger(__name__)
+
+
+class ZoteroWriteError(Exception):
+    """Zotero accepted the request but rejected the write (its `failed` map is non-empty)."""
 
 
 class ZoteroClient:
@@ -114,50 +119,6 @@ class ZoteroClient:
             logger.warning("Failed to download cloud file for attachment item %s: %s", item_key, e)
         return None
 
-    def get_collection(self, key_or_name: str) -> Optional[ZoteroCollection]:
-        """
-        Queries /collections and matches by key or case-insensitive name,
-        returning a ZoteroCollection domain model, or None if not found.
-        """
-        target = (key_or_name or "").strip()
-        if not target:
-            return None
-
-        try:
-            collections_data = self._request("GET", "/collections")
-            for col in collections_data:
-                c_data = col.get("data", {})
-                if (
-                    col.get("key", "").strip() == target
-                    or c_data.get("name", "").strip().lower() == target.lower()
-                ):
-                    return ZoteroCollection(
-                        key=col.get("key", ""),
-                        name=c_data.get("name", target),
-                        parent_collection=c_data.get("parentCollection") or None,
-                        version=col.get("version", 0),
-                        user_id=self.user_id,
-                    )
-
-            # Check if name is an existing collection key directly (e.g. 8-char alnum key)
-            if len(target) == 8 and target.isalnum():
-                try:
-                    col = self._request("GET", f"/collections/{target}")
-                    if isinstance(col, dict) and "key" in col:
-                        c_data = col.get("data", {})
-                        return ZoteroCollection(
-                            key=col.get("key", ""),
-                            name=c_data.get("name", target),
-                            parent_collection=c_data.get("parentCollection") or None,
-                            version=col.get("version", 0),
-                            user_id=self.user_id,
-                        )
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.warning("Failed to query collections for '%s': %s", key_or_name, e)
-        return None
-
     def get_or_create_collection(
         self, name: str, parent_key: Optional[str] = None
     ) -> ZoteroCollection:
@@ -181,12 +142,55 @@ class ZoteroClient:
                 key = first
         return ZoteroCollection(key=key, name=name, parent_collection=parent_key, user_id=self.user_id)
 
+    def _get_all(self, path: str, page_size: int = 100) -> List[Dict[str, Any]]:
+        """GETs every row of a listing endpoint, paging with `start` until a short page."""
+        rows: List[Dict[str, Any]] = []
+        while True:
+            page = self._request("GET", path, params={"limit": page_size, "start": len(rows)})
+            if not isinstance(page, list):
+                return rows
+            rows.extend(page)
+            if len(page) < page_size:
+                return rows
+
+    def get_collection(self, key_or_name: str) -> Optional[ZoteroCollection]:
+        """
+        Finds a collection by exact key or case-insensitive name. Never creates one.
+        Raises ValueError when the name matches more than one collection.
+        """
+        wanted = key_or_name.strip()
+        rows = self._get_all("/collections")
+        by_key = [c for c in rows if c.get("key") == wanted]
+        matches = by_key or [
+            c for c in rows if c.get("data", {}).get("name", "").strip().lower() == wanted.lower()
+        ]
+        if len(matches) > 1:
+            keys = ", ".join(c.get("key", "") for c in matches)
+            raise ValueError(f"Collection name '{key_or_name}' is ambiguous; use a key: {keys}")
+        if not matches:
+            return None
+        return self._collection_from_row(matches[0])
+
+    def get_subcollections(self, collection_key: str) -> List[ZoteroCollection]:
+        """Lists the direct subcollections of a collection (one level)."""
+        rows = self._get_all(f"/collections/{collection_key}/collections")
+        return [self._collection_from_row(row) for row in rows]
+
+    def _collection_from_row(self, row: Dict[str, Any]) -> ZoteroCollection:
+        data = row.get("data", {})
+        return ZoteroCollection(
+            key=row.get("key", ""),
+            name=data.get("name", ""),
+            parent_collection=data.get("parentCollection") or None,
+            version=row.get("version", 0),
+            user_id=self.user_id,
+        )
+
     def get_collection_items(
         self, collection_key: str, limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """Retrieves items in the given personal collection."""
-        params = {"limit": limit}
-        return self._request("GET", f"/collections/{collection_key}/items", params=params)
+        """Retrieves every item row in the collection (papers and their child rows), paged."""
+        return self._get_all(f"/collections/{collection_key}/items", page_size=limit)
 
     def create_items(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Creates items in the personal library."""
@@ -195,6 +199,83 @@ class ZoteroClient:
             successful = resp.get("successful") or resp.get("success") or {}
             return list(successful.values())
         return []
+
+    def create_child_note(self, parent_key: str, note_html: str, tags: List[str]) -> str:
+        """
+        Creates a note under `parent_key` and returns the new note's key. Zotero notes have no
+        title field: the first line of `note_html` is what Zotero shows as the title.
+        """
+        payload = [
+            {
+                "itemType": "note",
+                "parentItem": parent_key,
+                "note": note_html,
+                "tags": [{"tag": t} for t in tags],
+            }
+        ]
+        resp = self._request("POST", "/items", payload=payload)
+        failed = resp.get("failed") if isinstance(resp, dict) else None
+        if failed:
+            reasons = "; ".join(str(f.get("message", f)) for f in failed.values())
+            raise ZoteroWriteError(f"Zotero rejected the note under {parent_key}: {reasons}")
+        successful = resp.get("successful", {}) if isinstance(resp, dict) else {}
+        created: Any = next(iter(successful.values()), {})
+        key = created.get("key", "") if isinstance(created, dict) else ""
+        if not key:
+            raise ZoteroWriteError(f"Zotero returned no key for the note under {parent_key}")
+        return str(key)
+
+    def find_child_notes(self, parent_key: str, tag: str) -> List[Dict[str, Any]]:
+        """
+        Returns the `data` of each child note of `parent_key` that carries exactly `tag`
+        (with its `key` and `version`, which `update_note` needs).
+        """
+        rows = self._request(
+            "GET", f"/items/{parent_key}/children", params={"itemType": "note", "tag": tag}
+        )
+        notes: List[Dict[str, Any]] = []
+        for row in rows if isinstance(rows, list) else []:
+            data = row.get("data", {})
+            if any(t.get("tag") == tag for t in data.get("tags", [])):
+                notes.append(data)
+        return notes
+
+    def update_note(self, note: Dict[str, Any], note_html: str) -> None:
+        """
+        Replaces a note's body, leaving its tags and parent alone. Accepts the complete note
+        returned by find_child_notes; its version guards against concurrent edits (HTTP 412).
+        """
+        note_key = note["key"]
+        version = note["version"]
+        try:
+            self._request(
+                "PATCH",
+                f"/items/{note_key}",
+                payload={"note": note_html},
+                extra_headers={"If-Unmodified-Since-Version": str(version)},
+            )
+        except urllib.error.HTTPError as e:
+            raise ZoteroWriteError(
+                f"Zotero refused to update note {note_key} (HTTP {e.code}): {e.reason}"
+            ) from e
+
+    def replace_tags_with_prefix(self, item_key: str, prefix: str, new_tags: List[str]) -> None:
+        """
+        Replaces the item's tags that start with `prefix` by `new_tags`, keeping every other tag
+        verbatim (a PATCH replaces the whole tag list). Skips the write when nothing changes.
+        """
+        item = self._request("GET", f"/items/{item_key}")
+        current: List[Dict[str, Any]] = list(item.get("data", {}).get("tags", []))
+        kept = [t for t in current if not str(t.get("tag", "")).startswith(prefix)]
+        updated = kept + [{"tag": t} for t in new_tags]
+        if updated == current:
+            return
+        self._request(
+            "PATCH",
+            f"/items/{item_key}",
+            payload={"tags": updated},
+            extra_headers={"If-Unmodified-Since-Version": str(item.get("version"))},
+        )
 
     def create_attachment_link(
         self, parent_key: str, title: str, url: str, content_type: str = "application/pdf"

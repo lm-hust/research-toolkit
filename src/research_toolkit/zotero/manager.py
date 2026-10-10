@@ -346,15 +346,14 @@ class ZoteroManager:
         reconciled.extend(no_id_items)
         return reconciled, duplicate_count
 
-    def scan_collection_checkpoint(
-        self,
-        collection_key: str,
-        collection_name: str = "",
-        auto_download_cloud: bool = True,
-    ) -> CheckpointReport:
+    NON_PAPER_TYPES = frozenset({"attachment", "note", "annotation"})
+
+    def list_fulltext_items(
+        self, collection_key: str, auto_download_cloud: bool = True
+    ) -> List[ZoteroItem]:
         """
-        Scans a collection for full-text PDF attachments on disk (or resolves from Zotero Cloud)
-        and partitions items into ready and missing sets.
+        Lists the collection's papers (every key, no duplicate reconciliation) with their first
+        resolvable PDF. Child notes and annotations are not papers.
         """
         raw_items = self.client.get_collection_items(collection_key)
 
@@ -370,40 +369,105 @@ class ZoteroManager:
                 parent_k = data.get("parentItem")
                 if parent_k:
                     attachments.setdefault(parent_k, []).append(raw)
-            else:
-                doi = data.get("DOI")
-                url = data.get("url")
-                title = data.get("title", "Untitled")
+            elif itype not in self.NON_PAPER_TYPES:
                 tags = [t.get("tag", "") for t in data.get("tags", [])]
                 parent_items[key] = ZoteroItem(
                     key=key,
-                    title=title,
-                    doi=doi,
-                    url=url,
+                    title=data.get("title", "Untitled"),
+                    doi=data.get("DOI"),
+                    url=data.get("url"),
                     item_type=itype,
                     tags=tags,
                 )
 
-        # Associate PDF attachments with parent items (probing disk or resolving from cloud)
         for p_key, item in parent_items.items():
-            child_attachments = attachments.get(p_key, [])
-            for att in child_attachments:
-                att_key = att.get("key", "")
-                att_data = att.get("data", {})
-                content_type = att_data.get("contentType", "")
+            self._choose_fulltext(item, attachments.get(p_key, []), auto_download_cloud)
 
-                if "pdf" in content_type.lower() or att_data.get("filename", "").endswith(".pdf"):
+        return list(parent_items.values())
+
+    def _choose_fulltext(
+        self, item: ZoteroItem, attachments: List[Dict[str, Any]], auto_download_cloud: bool
+    ) -> None:
+        """
+        Sets item.fulltext_* to the first resolvable attachment in FULLTEXT_KINDS order
+        (any PDF beats any EPUB beats any HTML snapshot) and counts the other attachments.
+        """
+        item.extra_attachments = len(attachments)
+        for kind in self.FULLTEXT_KINDS:
+            for att in attachments:
+                if self._attachment_kind(att.get("data", {})) != kind:
+                    continue
+                att_key = att.get("key", "")
+                if kind == "pdf":
                     item.attachment_key = att_key
-                    resolved_pdf = self.resolve_attachment_pdf(
-                        att_key, auto_download_cloud=auto_download_cloud
-                    )
-                    if resolved_pdf:
-                        item.has_pdf = True
-                        item.pdf_path = str(resolved_pdf)
-                        break
+                resolved = self._resolve_attachment(att, kind, auto_download_cloud)
+                if not resolved:
+                    continue
+                if kind == "pdf":
+                    item.has_pdf = True
+                    item.pdf_path = str(resolved)
+                item.attachment_key = att_key
+                item.fulltext_kind = kind
+                item.fulltext_path = str(resolved)
+                item.extra_attachments -= 1
+                return
+
+    FULLTEXT_KINDS = ("pdf", "epub", "html")
+
+    @staticmethod
+    def _attachment_kind(att_data: Dict[str, Any]) -> Optional[str]:
+        content_type = att_data.get("contentType", "").lower()
+        filename = att_data.get("filename", "").lower()
+        if "pdf" in content_type or filename.endswith(".pdf"):
+            return "pdf"
+        if content_type == "application/epub+zip" or filename.endswith(".epub"):
+            return "epub"
+        if content_type in ("text/html", "application/xhtml+xml") or filename.endswith(
+            (".html", ".htm")
+        ):
+            return "html"
+        return None
+
+    def _resolve_attachment(
+        self, att: Dict[str, Any], kind: str, auto_download_cloud: bool
+    ) -> Optional[Path]:
+        """
+        Local storage first. PDF and EPUB fall back to Zotero Cloud Storage; HTML snapshots are
+        local only (cloud storage can hold a snapshot as a zipped page bundle, not one file).
+        """
+        att_key = att.get("key", "")
+        if kind == "pdf":
+            return self.resolve_attachment_pdf(att_key, auto_download_cloud=auto_download_cloud)
+        attach_dir = self.storage_dir / att_key
+        filename = att.get("data", {}).get("filename")
+        candidates = [attach_dir / Path(filename).name] if filename else []
+        patterns = ("*.epub",) if kind == "epub" else ("*.html", "*.htm")
+        if attach_dir.is_dir():
+            for pattern in patterns:
+                candidates.extend(sorted(attach_dir.glob(pattern)))
+        for path in candidates:
+            if path.is_file() and path.stat().st_size > 0:
+                return path
+        if kind == "epub" and auto_download_cloud and att_key:
+            return self.client.download_item_file(att_key, attach_dir / f"{att_key}.epub")
+        return None
+
+    def scan_collection_checkpoint(
+        self,
+        collection_key: str,
+        collection_name: str = "",
+        auto_download_cloud: bool = True,
+    ) -> CheckpointReport:
+        """
+        Scans a collection for full-text PDF attachments on disk (or resolves from Zotero Cloud)
+        and partitions items into ready and missing sets.
+        """
+        parent_items = self.list_fulltext_items(
+            collection_key, auto_download_cloud=auto_download_cloud
+        )
 
         # Reconcile duplicates
-        reconciled_items, dup_count = self.reconcile_duplicates(list(parent_items.values()))
+        reconciled_items, dup_count = self.reconcile_duplicates(parent_items)
 
         ready_items = [it for it in reconciled_items if it.has_pdf]
         missing_items = [it for it in reconciled_items if not it.has_pdf]

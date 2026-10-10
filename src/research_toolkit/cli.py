@@ -31,7 +31,8 @@ from research_toolkit.discovery.snowballer import (
     adapt_seeds,
     load_seeds_from_collection,
 )
-from research_toolkit.synthesis.adapters import get_default_gateway
+from research_toolkit.notebook import skim as notebook_skim
+from research_toolkit.notebook import sync as notebook_sync
 from research_toolkit.zotero.manager import ZoteroManager
 from research_toolkit.zotero.models import SyncResult
 
@@ -1332,96 +1333,126 @@ def checkpoint(collection: Optional[str], status: bool) -> None:
 
 @cli.command("sync-notebook")
 @click.option(
-    "--collection",
-    "-c",
-    default=None,
-    help="Target Zotero collection name or key. Defaults to active collection in session.",
+    "--collection", "-c", "collections", required=True, multiple=True,
+    help="Zotero collection name or key. Repeat to sync several collections into one notebook.",
 )
 @click.option(
-    "--allow-partial",
+    "--notebook",
+    default=None,
+    help="Target Gemini Notebook UUID or exact title. Default: the collection's name (created if missing).",
+)
+@click.option("--recursive", is_flag=True, help="Include every subcollection.")
+@click.option(
+    "--replace", "replace", multiple=True, metavar="KEY",
+    help="Delete the source of this Zotero key and upload it again. Repeatable.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the plan only; write nothing.")
+@click.option("--force", is_flag=True, help="Sync into a notebook whose sources mostly lack [key] titles.")
+@click.option(
+    "--allow-url",
     is_flag=True,
-    default=False,
-    help="Proceed with upload even if some PDFs are missing.",
+    help="For items with no PDF/EPUB/HTML snapshot, let Gemini Notebook fetch the DOI or URL "
+    "(may only get a paywall page).",
 )
-def sync_notebook(collection: Optional[str], allow_partial: bool) -> None:
-    """Create a topic notebook in NotebookLM and upload verified local PDF sources."""
-    session = load_session()
-    col = collection or session.get("active_collection")
-    if not col:
-        click.echo("⚠️ No collection specified. Provide --collection <name-or-key>.", err=True)
-        sys.exit(1)
+def sync_notebook(
+    collections: tuple[str, ...],
+    notebook: Optional[str],
+    recursive: bool,
+    replace: tuple[str, ...],
+    dry_run: bool,
+    force: bool,
+    allow_url: bool,
+) -> None:
+    """Sync Zotero collections' full texts into a Gemini Notebook as `[key] title` sources.
 
-    manager = ZoteroManager()
-    report = manager.scan_collection_checkpoint(col)
-
-    if report.missing_items and not allow_partial:
-        click.echo(
-            f"🛑 FulltextCheckpoint: {len(report.missing_items)}/{report.total_items} items lack local PDFs.\n"
-            f"Resolve missing PDFs in Zotero first, or pass --allow-partial to proceed with ready items.",
-            err=True,
+    Each item contributes its first PDF, else an EPUB, else its HTML snapshot (as markdown).
+    """
+    try:
+        report = notebook_sync.sync_collections(
+            ZoteroManager(),
+            collections,
+            notebook,
+            recursive=recursive,
+            replace=replace,
+            dry_run=dry_run,
+            force=force,
+            allow_url=allow_url,
+            progress=lambda m: click.echo(m, err=True),
         )
+    except notebook_sync.SyncError as e:
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-
-    if not report.ready_items:
-        click.echo("⚠️ No ready PDF files found in collection.", err=True)
-        sys.exit(1)
-
-    click.echo(f"🔄 Creating NotebookLM notebook for: '{report.collection_name}'...")
-    gw = get_default_gateway()
-    notebook = gw.create_notebook(report.collection_name)
-    click.echo(f"📓 Notebook created: ID={notebook.id} ({notebook.title})")
-
-    uploaded = []
-    for item in report.ready_items:
-        if item.pdf_path:
-            click.echo(f"  Uploading source: {item.title[:45]}...")
-            src = gw.upload_source(notebook.id, Path(item.pdf_path))
-            uploaded.append(src)
-
-    session["notebook_id"] = notebook.id
-    session["active_collection"] = col
-    save_session(session)
-    click.echo(f"✨ Successfully synced {len(uploaded)} sources to NotebookLM (ID: {notebook.id}).")
+    click.echo(json.dumps(report, ensure_ascii=False, indent=2))
 
 
-@cli.command()
-@click.argument("query")
+def stdin_is_interactive() -> bool:
+    """Whether a person can answer a prompt (agents run without a terminal)."""
+    return sys.stdin.isatty()
+
+
+@cli.command("skim-notebook")
+@click.option("--notebook", required=True, help="Gemini Notebook UUID or exact title.")
 @click.option(
-    "--notebook-id",
-    "-nb",
-    default=None,
-    help="Target NotebookLM notebook ID. Defaults to active notebook in session.",
+    "--key",
+    "keys",
+    multiple=True,
+    help="Zotero item key of a `[key]` source (repeatable). Default: every `[key]` source.",
 )
-def ask(query: str, notebook_id: Optional[str]) -> None:
-    """Execute source-grounded Q&A against synthesized notebook sources."""
-    session = load_session()
-    nb_id = notebook_id or session.get("notebook_id")
-    if not nb_id:
-        click.echo(
-            "⚠️ No active notebook ID found. Run `sync-notebook` first or pass --notebook-id.",
-            err=True,
+@click.option(
+    "--focus",
+    default=None,
+    help="Research question: rate each paper's relevance and tag it gemini-skim/relevance:<level>.",
+)
+@click.option("--refresh", is_flag=True, help="Re-read papers that already have a skim note (same note).")
+@click.option("--yes", is_flag=True, help="Skip the confirmation when the quota looks too small.")
+def skim_notebook(
+    notebook: str, keys: tuple[str, ...], focus: Optional[str], refresh: bool, yes: bool
+) -> None:
+    """Skim `[key]` sources one by one in fresh conversations; write each as a Zotero child note.
+
+    Papers that already have a skim note are skipped unless --refresh. The notebook's existing
+    conversation is saved as a notebook note before it is replaced.
+    """
+
+    def confirm() -> bool:
+        if yes:
+            return True
+        if not stdin_is_interactive():
+            click.echo("Not an interactive terminal; rerun with --yes to skim anyway.", err=True)
+            return False
+        return click.confirm("Continue?", default=False, err=True)
+
+    try:
+        report = notebook_skim.skim_notebook(
+            ZoteroManager().client,
+            notebook,
+            list(keys),
+            progress=lambda m: click.echo(m, err=True),
+            focus=focus,
+            refresh=refresh,
+            confirm=confirm,
         )
+    except notebook_skim.SkimError as e:
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+    click.echo(json.dumps(report, ensure_ascii=False, indent=2))
 
-    click.echo(f"💬 Querying notebook '{nb_id}'...")
-    gw = get_default_gateway()
-    grounded = gw.query_sources(nb_id, query)
 
-    click.echo("\n" + "=" * 60)
-    click.echo("🧠 GROUNDED SYNTHESIS ANSWER")
-    click.echo("=" * 60)
-    click.echo(grounded.answer)
+def check_notebook_auth() -> str:
+    """Authenticate against Gemini Notebook via notebooklm-py; raise on failure.
 
-    if grounded.citations:
-        click.echo("\n" + "-" * 60)
-        click.echo("📌 Distilled Evidence (Verbatim Grounded Quotes):")
-        click.echo("-" * 60)
-        for idx, cit in enumerate(grounded.citations, 1):
-            src_str = cit.source_title or cit.source_id
-            offset_str = f" [offset {cit.start_offset}:{cit.end_offset}]" if cit.end_offset else ""
-            click.echo(f"{idx}. \"{cit.quote}\"")
-            click.echo(f"   Source: {src_str}{offset_str}")
-    click.echo("=" * 60)
+    Equivalent to `notebooklm auth check --test`: opens a client from the
+    profile master token and lists notebooks as the liveness signal.
+    """
+    import asyncio
+
+    from research_toolkit.notebook import client as notebook_client
+
+    async def _probe() -> int:
+        async with notebook_client.open_client() as client:
+            return len(await client.notebooks.list())
+
+    return f"Authenticated ({asyncio.run(_probe())} notebooks)"
 
 
 @cli.command()
@@ -1464,19 +1495,17 @@ def doctor() -> None:
     oa_key = os.getenv("OPENALEX_API_KEY")
     checks.append(("OpenAlex", "PASS" if oa_key else "INFO", "API key configured" if oa_key else "Public polite pool active."))
 
-    # 4. NotebookLM / Gemini Gateway
-    nlm_auth = os.getenv("NOTEBOOKLM_AUTH_JSON")
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    master_token_file = Path.home() / ".notebooklm" / "profiles" / "default" / "master_token.json"
-
-    if nlm_auth:
-        checks.append(("Synthesis Gateway", "PASS", "NOTEBOOKLM_AUTH_JSON configured."))
-    elif master_token_file.exists():
-        checks.append(("Synthesis Gateway", "PASS", f"Master token file found: {master_token_file}"))
-    elif gemini_key:
-        checks.append(("Synthesis Gateway", "PASS", "GEMINI_API_KEY configured (Gemini fallback active)."))
-    else:
-        checks.append(("Synthesis Gateway", "WARN", "No synthesis credentials found (NOTEBOOKLM_AUTH_JSON, master_token.json, or GEMINI_API_KEY)."))
+    # 4. Gemini Notebook
+    try:
+        checks.append(("Gemini Notebook", "PASS", check_notebook_auth()))
+    except Exception as exc:  # any failure to authenticate is a FAIL, not a crash
+        checks.append(("Gemini Notebook", "FAIL", f"Auth check failed: {exc}"))
+    if os.getenv("NOTEBOOKLM_AUTH_JSON"):
+        checks.append((
+            "Gemini Notebook",
+            "WARN",
+            "NOTEBOOKLM_AUTH_JSON is set; it overrides the profile master token. Unset it.",
+        ))
 
     # Format output
     try:

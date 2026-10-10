@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Git exports repository selectors/index paths to hooks. Checks may create temporary
+# repositories; keep those subprocesses from targeting this repository's index/config.
+while IFS= read -r variable; do
+  unset "$variable"
+done < <(git rev-parse --local-env-vars)
+
 echo "==> [Pre-commit Hook] Running verification checks..."
 ./scripts/check.sh
