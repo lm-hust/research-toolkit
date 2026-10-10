@@ -173,6 +173,7 @@ async def _sync_items(
         except (OSError, ValueError) as e:
             raise SyncError(f"Cannot read/reconcile unconfirmed-write safety record: {e}") from e
         if unresolved:
+            report["added"] = []
             report["aborted_reason"] = (
                 f"Unconfirmed writes for {', '.join(unresolved)} remain unresolved. Inspect the notebook "
                 f"and restore a ready [key] title, or after manually verifying absence remove {safety.path if safety else state_dir}."

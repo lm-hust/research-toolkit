@@ -88,6 +88,9 @@ def test_restart_preserves_unconfirmed_write_protection_while_listing_is_still_s
     restarted = run()
     assert "Unconfirmed writes" in restarted["aborted_reason"]
     assert restarted["added"] == []
+    blocked_preview = run("--dry-run")
+    assert blocked_preview["aborted_reason"]
+    assert blocked_preview["added"] == []
     assert fake.peak_source_counts[nb_id] == 300
     fake.upload_visibility_delay = 0
     fake.hidden_sources.clear()

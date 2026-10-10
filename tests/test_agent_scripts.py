@@ -228,6 +228,24 @@ def test_review_ledger_pins_refs_and_bounds_followups_to_repair_diff(
     assert outer_index.read_bytes() == b"outer-index-sentinel"
 
 
+def test_precommit_check_children_do_not_inherit_repository_selectors(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True,
+                   env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")})
+    (repo / "scripts").mkdir()
+    check = repo / "scripts" / "check.sh"
+    check.write_text('#!/bin/bash\nif [ -n "${GIT_DIR-}${GIT_INDEX_FILE-}${GIT_COMMON_DIR-}${GIT_WORK_TREE-}" ]; then exit 7; fi\n', encoding="utf-8")
+    check.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(SCRIPTS.parent / ".githooks" / "pre-commit")], cwd=repo,
+        env={**os.environ, "GIT_DIR": str(repo / ".git"), "GIT_INDEX_FILE": str(tmp_path / "outer-index")},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "outer-index").exists()
+
+
 def test_inventory_filters_candidates_without_claiming_authorship_or_authority() -> None:
     data = {"notebook_id": "uuid", "sources": [
         {"id": "paper", "title": "Other et al. - 2025 - Paper"},

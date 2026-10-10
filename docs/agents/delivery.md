@@ -70,7 +70,7 @@ Done when: every gate is passed or explicitly waived by the user, evidence exist
 ./scripts/check-log.sh /tmp/targeted-check.log uv run --with pytest pytest tests/test_sync_notebook_cli.py -q
 ```
 
-The wrapper prints the last 80 lines, keeps the complete log, and exits with the command's original status. Use `uv run python` and `uv run --with pytest pytest` rather than assuming bare `python`/`pytest` are installed. `scripts/check.sh` remains the single verification command for pre-commit and CI.
+The wrapper prints the last 80 lines, keeps the complete log, and exits with the command's original status. Use `uv run python` and `uv run --with pytest pytest` rather than assuming bare `python`/`pytest` are installed. `scripts/check.sh` remains the single verification command for pre-commit and CI. The hook removes Git's repository-local environment selectors before launching checks; temporary-repository tests and `review_scope.py` also sanitize their Git subprocess environments. This prevents fixtures from writing the outer worktree's index or shared config.
 
 ## External-service test scenarios
 
