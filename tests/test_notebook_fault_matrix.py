@@ -61,3 +61,63 @@ def test_capacity_partial_success_and_resume_under_combined_faults(
     assert fake.peak_source_counts[nb_id] <= 300
     for key in ("K1", "K2", "K3"):
         assert sum((title or "").startswith(f"[{key}]") for title in fake.source_titles(nb_id)) == 1
+
+
+def test_restart_preserves_unconfirmed_write_protection_while_listing_is_still_stale(tmp_path: Path) -> None:
+    library = FakeZoteroLibrary(tmp_path / "storage")
+    collection = library.add_collection("restart", key="RESTART1")
+    for key in ("K1", "K2", "K3"):
+        library.add_paper(collection, key, f"Paper {key}")
+    fake = FakeNotebookClient()
+    nb_id = fake.add_notebook("restart", ["[K1] Old", "[K1] Duplicate"] +
+                              [f"[OLD{i}] Existing" for i in range(297)])
+    fake.delete_errors["[K1]"] = RuntimeError("delete refused")
+    fake.committed_uploads["[K2]"] = 1
+    fake.upload_visibility_delay = 10
+
+    def run(*extra: str) -> dict[str, Any]:
+        with patch(OPEN_CLIENT, fake.open), patch("research_toolkit.cli.ZoteroManager", library.manager):
+            result = CliRunner().invoke(cli, ["sync-notebook", "--collection", "restart", "--replace", "K1", *extra])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    first = run()
+    assert first["failed"]
+    assert fake.peak_source_counts[nb_id] == 300
+    assert list((library.storage_dir / ".research-toolkit" / "notebook-sync").glob("*.json"))
+    restarted = run()
+    assert "Unconfirmed writes" in restarted["aborted_reason"]
+    assert restarted["added"] == []
+    assert fake.peak_source_counts[nb_id] == 300
+    fake.upload_visibility_delay = 0
+    fake.hidden_sources.clear()
+    fake.delete_errors.clear()
+    preview = run("--dry-run")
+    assert preview["aborted_reason"] is None
+    assert list((library.storage_dir / ".research-toolkit" / "notebook-sync").glob("*.json"))
+    completed = run()
+    assert completed["failed"] == []
+    assert fake.peak_source_counts[nb_id] == 300
+    assert not list((library.storage_dir / ".research-toolkit" / "notebook-sync").glob("*.json"))
+    assert sum((title or "").startswith("[K2]") for title in fake.source_titles(nb_id)) == 1
+
+
+def test_restart_does_not_confirm_a_new_write_from_a_stale_deleted_source(tmp_path: Path) -> None:
+    library = FakeZoteroLibrary(tmp_path / "storage")
+    collection = library.add_collection("stale-restart", key="STALE001")
+    library.add_paper(collection, "K1", "Paper K1")
+    fake = FakeNotebookClient()
+    fake.add_notebook("stale-restart", ["[K1] Paper K1"])
+    fake.upload_visibility_delay = fake.deletion_visibility_delay = 10
+    fake.committed_uploads["[K1]"] = 1
+
+    def run() -> dict[str, Any]:
+        with patch(OPEN_CLIENT, fake.open), patch("research_toolkit.cli.ZoteroManager", library.manager):
+            result = CliRunner().invoke(cli, ["sync-notebook", "--collection", "stale-restart", "--replace", "K1"])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    assert run()["failed"]
+    second = run()
+    assert "Unconfirmed writes" in second["aborted_reason"]
+    assert second["added"] == []

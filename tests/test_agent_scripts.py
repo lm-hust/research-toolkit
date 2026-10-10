@@ -141,13 +141,22 @@ def test_acceptance_checks_link_existence_without_printing_private_response(tmp_
         for name in ("automated", "live", "human")
     }}), encoding="utf-8")
     gh = tmp_path / "gh"
-    gh.write_text("#!/bin/sh\necho private-response\nexit 0\n", encoding="utf-8")
+    gh.write_text("#!/bin/sh\nprintf '%s\\n' '{\"issue_url\":\"https://api.github.com/repos/o/r/issues/2\",\"body\":\"private-response\",\"run_id\":1}'\nexit 0\n", encoding="utf-8")
     gh.chmod(0o755)
     command = [sys.executable, str(SCRIPTS / "check_acceptance.py"), str(record), "--verify-links"]
     env = {**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"}
     result = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     assert "private-response" not in result.stdout + result.stderr
+    data = json.loads(record.read_text())
+    data["gates"]["human"]["evidence"] = ["https://github.com/o/r/issues/999#issuecomment-3"]
+    record.write_text(json.dumps(data), encoding="utf-8")
+    wrong_parent = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+    assert wrong_parent.returncode == 1
+    data["gates"]["human"]["evidence"] = ["https://github.com/o/r/actions/runs/999/job/4"]
+    record.write_text(json.dumps(data), encoding="utf-8")
+    wrong_run = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
+    assert wrong_run.returncode == 1
     gh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
     result = subprocess.run(command, env=env, capture_output=True, text=True, check=False)
     assert result.returncode == 1
@@ -207,6 +216,15 @@ def test_review_ledger_pins_refs_and_bounds_followups_to_repair_diff(
     assert followup["findings"] == data["findings"]
     assert followup["reviewed_head"] is None
     assert run_script("review_scope.py", *args).returncode == 1
+    assert outer_index.read_bytes() == b"outer-index-sentinel"
+    contaminated = subprocess.run(
+        [sys.executable, str(SCRIPTS / "review_scope.py"), "--repo", str(repo), "--base", base,
+         "--spec", "user-request", "--output", str(tmp_path / "contaminated.json")],
+        env={**os.environ, "GIT_DIR": str(tmp_path / "nonexistent-git-dir")},
+        capture_output=True, text=True, check=False,
+    )
+    assert contaminated.returncode == 0, contaminated.stderr
+    assert json.loads((tmp_path / "contaminated.json").read_text())["head"] == git("rev-parse", "HEAD")
     assert outer_index.read_bytes() == b"outer-index-sentinel"
 
 

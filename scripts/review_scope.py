@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,7 +13,10 @@ from typing import Any
 
 
 def git(repo: Path, *args: str) -> str:
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=False,
+        env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
+    )
     if result.returncode:
         raise ValueError(result.stderr.strip() or f"git {' '.join(args)} failed")
     return result.stdout.strip()

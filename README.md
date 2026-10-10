@@ -142,6 +142,7 @@ uv run research-toolkit sync-notebook --collection intelligence-per-kwh --replac
 - 每个条目只取第一个 PDF；没有 PDF 时依次用 EPUB、Zotero 网页快照（本地转成 markdown 上传），都没有则列入 `missing_fulltext`。其余附件数记入 `extra_attachments`。
 - 每个来源标题为 `[Zotero条目key] 论文标题`；已 ready 的 `[key]` 来源跳过，尚在处理的来源会继续等待，失败列入报告而不重复上传。
 - 标题核对失败时，报告保留 `source_id`，来源可能已上传。先在网页中将该来源恢复为 `[key] 论文标题`，再重跑，避免重复上传。
+- 未确认上传的安全记录保存在 `<Zotero storage>/.research-toolkit/notebook-sync/`。来源仍不可见时，重跑也会拒绝盲目重传；来源 ready 且标题正确后，真实运行会清除记录（dry-run 不清除）。若来源确实没有落地，先人工核实，再移除报告指定的安全记录。续跑使用相同存储目录，每个笔记本只运行一个同步进程。
 - 上传前先算计划：新增、已存在、缺全文（`--allow-url` 下有 DOI/URL 的条目算作新增）、`orphaned`（笔记本里有、输入里没有；只报告，从不删除）。
 - 计划中的来源总数超过 300 时一篇都不传；若替换删除失败，后续上传也不会占用未实际释放的容量。目标笔记本中大部分来源没有 `[key]` 标题（手动维护）时拒绝写入，除非加 `--force`。预检停止的原因在 `aborted_reason` 中说明。
 - **Identity 永远不接受同步**，即使使用 `--force` 或 UUID；也不会根据同名 collection 创建 Identity。

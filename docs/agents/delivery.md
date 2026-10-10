@@ -58,7 +58,7 @@ uv run python scripts/check_acceptance.py .scratch/acceptance.json --head "$(git
 uv run python scripts/check_acceptance.py .scratch/acceptance.json --head "$(git rev-parse HEAD)" --verify-links --ready
 ```
 
-`--ready` rejects pending gates. `waived` requires `reason`, `approved_by` and an evidence link to explicit human approval; the agent never grants itself a waiver. Links may be issue/PR pages, issue comments, or Actions runs/jobs. Existence checks do not prove CI passed, ran against that SHA, or that a comment contains sufficient acceptance: reviewers inspect those facts. Never claim evidence exists without reading it. No automatic network check runs during local tests/CI.
+`--ready` rejects pending gates. `waived` requires `reason`, `approved_by` and an evidence link to explicit human approval; the agent never grants itself a waiver. Links may be issue/PR pages, issue comments, or Actions runs/jobs. Existence checks also validate a comment/job's parent issue/PR/run. They do not prove CI passed, ran against that SHA, or that a comment contains sufficient acceptance: reviewers inspect those facts. Never claim evidence exists without reading it. No automatic network check runs during local tests/CI.
 
 Done when: every gate is passed or explicitly waived by the user, evidence exists and supports the claim, and PR metadata reflects the real status. Keep Draft when a required gate remains pending, or ask the user whether they explicitly accept deferral. Merge and ticket closure follow that decision.
 
@@ -74,6 +74,6 @@ The wrapper prints the last 80 lines, keeps the complete log, and exits with the
 
 ## External-service test scenarios
 
-`tests/notebook_fakes.py` exposes file-upload commit/response loss, deletion failures/commit loss, delayed upload visibility, stale deleted-source listings and peak source counts. `tests/test_notebook_fault_matrix.py` exercises bounded fault combinations and input permutations through the CLI.
+`tests/notebook_fakes.py` exposes file-upload commit/response loss, deletion failures/commit loss, delayed upload visibility, stale deleted-source listings and peak source counts. `tests/test_notebook_fault_matrix.py` exercises bounded fault combinations and input permutations through the CLI, including a restart while the uncertain upload is still hidden. Unconfirmed-write safety records are stored outside the repo under the configured Zotero storage directory; test fixtures keep these records in disposable directories.
 
 Reviewers check partial-success reporting, actual capacity, ownership before cleanup, and restart behavior together. When a new race is found, add an executable scenario at the existing seam; avoid substituting a steering-file warning for a reproducible check.

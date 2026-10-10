@@ -3,8 +3,10 @@ src/research_toolkit/notebook/sync.py
 Incremental sync of Zotero collections into a Gemini Notebook.
 
 Every uploaded Notebook Source is titled `[<Zotero key>] <title>`; a source whose title carries
-an item's `[key]` prefix means that item is already synced. There is no local state: a re-run
-recomputes everything from Zotero and the notebook, so an interrupted run resumes by re-running.
+an item's `[key]` prefix identifies its existing source. A re-run recomputes incremental
+membership from Zotero and the notebook; it also checks exceptional unconfirmed-write safety records.
+Incremental membership still comes from the server; a local safety record retains unconfirmed
+writes across restarts so a lagging list cannot authorize a duplicate retry.
 The run first computes a `SyncPlan` (notebook/plan.py); a dry run or a guard abort stops there,
 before any write (including creating the notebook).
 
@@ -27,6 +29,7 @@ from research_toolkit.notebook.client import NotebookClient
 from research_toolkit.notebook.fulltext import URL_KIND, upload_target
 from research_toolkit.notebook.plan import SOURCE_LIMIT, SyncPlan, plan_sync
 from research_toolkit.notebook.resolve import NotebookResolutionError, find_notebook
+from research_toolkit.notebook.safety import UnconfirmedWrites
 from research_toolkit.notebook.titles import source_key, source_title
 from research_toolkit.zotero.manager import ZoteroManager
 from research_toolkit.zotero.models import ZoteroCollection, ZoteroItem
@@ -109,6 +112,7 @@ def sync_collections(
             force=force,
             allow_url=allow_url,
             progress=progress,
+            state_dir=manager.storage_dir / ".research-toolkit" / "notebook-sync",
         )
     )
 
@@ -151,6 +155,7 @@ async def _sync_items(
     force: bool,
     allow_url: bool,
     progress: Progress,
+    state_dir: Path,
 ) -> dict[str, Any]:
     async with notebook_client.open_client() as client:
         try:
@@ -162,6 +167,18 @@ async def _sync_items(
         sources = await client.sources.list(notebook.id) if notebook else []
         plan = plan_sync(items, sources, replace_keys=replace, force=force, allow_url=allow_url)
         report = _plan_report(notebook, notebook_ref or default_title, plan, dry_run)
+        try:
+            safety = UnconfirmedWrites(state_dir, notebook.id) if notebook else None
+            unresolved = safety.unresolved(sources, dry_run=dry_run) if safety else []
+        except (OSError, ValueError) as e:
+            raise SyncError(f"Cannot read/reconcile unconfirmed-write safety record: {e}") from e
+        if unresolved:
+            report["aborted_reason"] = (
+                f"Unconfirmed writes for {', '.join(unresolved)} remain unresolved. Inspect the notebook "
+                f"and restore a ready [key] title, or after manually verifying absence remove {safety.path if safety else state_dir}."
+            )
+            progress(f"Aborted: {report['aborted_reason']}")
+            return report
         progress(
             f"Plan: {len(plan.uploads)} to upload, {len(plan.existing)} already synced, "
             f"{len(plan.missing_fulltext)} without full text, {len(plan.orphaned)} orphaned"
@@ -180,7 +197,9 @@ async def _sync_items(
             f"'{notebook.title}' ({notebook.id})"
         )
 
-        uploader = _Uploader(client, notebook.id, report, progress, {s.id for s in sources})
+        if safety is None:
+            safety = UnconfirmedWrites(state_dir, notebook.id)
+        uploader = _Uploader(client, notebook.id, report, progress, {s.id for s in sources}, safety)
         existing_by_key = {item.key: item for item in plan.existing}
         for source in sources:
             item = existing_by_key.get(source_key(source.title) or "")
@@ -217,12 +236,14 @@ class _Uploader:
         report: dict[str, Any],
         progress: Progress,
         known_ids: set[str],
+        safety: UnconfirmedWrites,
     ) -> None:
         self.client = client
         self.notebook_id = notebook_id
         self.report = report
         self.progress = progress
         self.known_ids = known_ids  # sources not left behind by the upload in progress
+        self.safety = safety
         self.deleted_ids: set[str] = set()  # confirmed deletes may linger in stale listings
         self.unresolved_uploads: set[tuple[str, str]] = set()  # filename/title of unseen uncertain writes
         self.uploaded: dict[str, ZoteroItem] = {}  # source id -> item, added in this run
@@ -258,7 +279,7 @@ class _Uploader:
                     f"the limit is {SOURCE_LIMIT}. Planned replacement capacity was not freed."
                 )
             with upload_target(item, kind) as target:
-                source = await self._add(target, wanted, is_url=kind == URL_KIND)
+                source = await self._add(target, wanted, item.key, is_url=kind == URL_KIND)
             self.known_ids.add(source.id)
             ready = await self.client.sources.wait_until_ready(
                 self.notebook_id, source.id, timeout=READY_TIMEOUT
@@ -316,25 +337,35 @@ class _Uploader:
                         {**_entry(item), "source_id": source.id, "error": f"Final title check: {e}"}
                     )
 
-    async def _add(self, target: str, wanted: str, is_url: bool) -> Source:
+    async def _add(self, target: str, wanted: str, key: str, is_url: bool) -> Source:
         """add_file (or add_url); after an UNCONFIRMED_WRITE, removes its residue, retries once."""
         sources = self.client.sources
         for attempt in (1, 2):
+            self.safety.record(key, wanted, self.known_ids | self.deleted_ids)
             try:
                 if is_url:
-                    return await sources.add_url(self.notebook_id, target, title=wanted)
-                return await sources.add_file(self.notebook_id, target, title=wanted)
+                    source = await sources.add_url(self.notebook_id, target, title=wanted)
+                else:
+                    source = await sources.add_file(self.notebook_id, target, title=wanted)
             except NotebookLMError as e:
                 if not e.unconfirmed:
+                    self.safety.confirmed(key)
                     raise
                 self.progress(f"  unconfirmed upload ({e}); removing its residue")
                 landed = await self._clean_residue(
                     target if is_url else Path(target).name, wanted
                 )
+                self.safety.confirmed(key)
                 if landed is not None:
                     return landed
                 if attempt == 2:
                     raise
+            except Exception:
+                self.safety.confirmed(key)
+                raise
+            else:
+                self.safety.confirmed(key)
+                return source
         raise AssertionError("unreachable")
 
     async def _clean_residue(self, filename: str, wanted: str) -> Optional[Source]:

@@ -23,12 +23,12 @@ Each Zotero item becomes one source titled `[KEY] Title`, from its first PDF, el
 Report fields:
 
 - `notebook_id`, `notebook_title`, `created` (the run created the notebook), `dry_run`.
-- `aborted_reason`: non-null means nothing was uploaded: the notebook looks hand-maintained, or it would exceed 300 sources. Relay the reason.
+- `aborted_reason`: non-null means nothing was uploaded: the notebook looks hand-maintained, would exceed 300 sources, or has unresolved earlier writes. Relay the reason.
 - `added[]` (`key`, `title`, `kind`: `pdf|epub|html|url`); in a dry run, what would be uploaded.
 - `replaced[]`, `skipped_existing[]`, `renamed[]` (titles the server reset to the filename and the run renamed back).
 - `missing_fulltext[]`: items with nothing to upload; the user needs to add a full text in Zotero (or rerun with `--allow-url`).
 - `orphaned[]` (`key`, `title`, `source_id`): sources in the notebook that are not in the given collections. Reported only, never deleted.
-- `failed[]` (`key`, `title`, `error`): rerun to retry upload or readiness failures. If an unconfirmed upload is not yet visible, the toolkit refuses a blind retry and blocks later uploads until its capacity can be reconciled; inspect the notebook before retrying to avoid duplicates. Title-check failures (immediate or final) also carry `source_id`; the upload may already be in `added[]`. Inspect that source in the notebook before retrying, since a title left as a filename cannot be matched by key and may cause a duplicate upload. Have the user restore its `[KEY] Title` in the web UI.
+- `failed[]` (`key`, `title`, `error`): rerun to retry upload or readiness failures. If an unconfirmed upload is not yet visible, the toolkit refuses a blind retry and blocks later uploads until its capacity can be reconciled. Safety records under `<Zotero storage>/.research-toolkit/notebook-sync/` persist this protection across restarts. A ready source with its expected `[KEY] Title` clears the record on a real run; dry-run leaves it untouched. If the source is absent or left under a filename, inspect the notebook manually: restore its ready keyed title, or clear only the reported safety file after verifying that the uncertain write did not land. Use the same storage directory when resuming, and one sync writer per notebook; a different cache or concurrent runs cannot share this protection. Title-check failures (immediate or final) also carry `source_id`; the upload may already be in `added[]`. Inspect that source in the notebook before retrying, since a title left as a filename cannot be matched by key and may cause a duplicate upload. Have the user restore its `[KEY] Title` in the web UI.
 - `extra_attachments[]` (`key`, `title`, `count`): items with more attachments than the one uploaded (supplements were not synced).
 - `source_count`, `projected_source_count`: sources now, and after this run.
 
