@@ -117,17 +117,17 @@ PYTHONPATH=src python3 -m research_toolkit.cli checkpoint --status
 
 ### 阶段 3：创建研读笔记本并同步来源 (`sync-notebook`)
 
-当检查点确认完毕后，将本地已就绪的 PDF 批量上传至 NotebookLM：
+把一个 Zotero collection 中有 PDF 的条目增量同步到 Gemini Notebook（NotebookLM）：
 
 ```bash
-# 严格检查点模式（若有缺失 PDF 则阻断，防止信息不全）
-PYTHONPATH=src python3 -m research_toolkit.cli sync-notebook
+# 默认使用与 collection 同名的笔记本，不存在就新建
+uv run research-toolkit sync-notebook --collection intelligence-per-kwh
 
-# 容错模式（即使部分文献缺失 PDF，也先行上传已有文献）
-PYTHONPATH=src python3 -m research_toolkit.cli sync-notebook --allow-partial
+# 指定已有笔记本（完整标题或 UUID；同名有多个时报错，请改用 UUID）
+uv run research-toolkit sync-notebook --collection intelligence-per-kwh --notebook <UUID>
 ```
-- 自动以主题分类命名创建研读 Notebook。
-- 自动记录活动笔记本 ID 到用户会话中。
+- 每个来源标题为 `[Zotero条目key] 论文标题`；已存在 `[key]` 的条目跳过，重跑即可续传。
+- stdout 只输出 JSON 报告（`notebook_id`、`notebook_title`、`created`、`added`、`skipped_existing`、`missing_fulltext`、`failed`），进度走 stderr。
 
 ---
 

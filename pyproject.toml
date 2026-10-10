@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "research-toolkit"
 version = "0.1.0"
-description = "A specialized research toolkit for literature discovery, Zotero integration, NotebookLM synthesis, and Obsidian PKM distillation."
+description = "A specialized research toolkit for literature discovery, Zotero integration, Gemini Notebook sync, and Obsidian PKM distillation."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
@@ -55,7 +55,6 @@ ignore = ["E501"]
 "src/research_toolkit/discovery/clients.py" = ["TID251"]
 "src/research_toolkit/zotero/client.py" = ["TID251"]
 "src/research_toolkit/zotero/manager.py" = ["TID251"]
-"src/research_toolkit/synthesis/gateway.py" = ["TID251"]
 "tests/*" = ["TID251"]
 
 [tool.mypy]
