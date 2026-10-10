@@ -24,6 +24,7 @@ Querying, by contrast, is a single CLI call. Wrapping it would add nothing.
 4. **The frozen MCP gateway loses its two Gemini Notebook tools.** `sync_notebook` and `query_notebook` and their REST routes are removed, not rewired. Removal is not extension, so this stays within ADR-0007: a frozen feature whose backing module is deleted is removed along with it.
 5. **`doctor` checks auth for real** through notebooklm-py, equivalent to `notebooklm auth check`, and warns when `NOTEBOOKLM_AUTH_JSON` is set, since it shadows the profile's master token.
 6. Both paths pin `notebooklm-py[headless,android]==0.8.4`.
+7. **Batch skim-reading is also a toolkit command** (`skim-notebook`, decided in #56). It asks one structured question per paper and writes a Zotero child note, so it is a batch, stateful write path like sync. The rule is: batch or stateful work goes in the toolkit, single interactive calls go to the CLI.
 
 ## Consequences
 - There is one backend and no abstraction layer. A second backend would have to be added deliberately, not through a fallback.
