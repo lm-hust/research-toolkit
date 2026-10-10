@@ -5,22 +5,32 @@ Incremental sync of a Zotero collection into a Gemini Notebook.
 Every uploaded Notebook Source is titled `[<Zotero key>] <title>`; a source whose title carries
 an item's `[key]` prefix means that item is already synced. There is no local state: a re-run
 recomputes everything from Zotero and the notebook, so an interrupted run resumes by re-running.
+
+The server is unreliable about titles (it may reset a title to the uploaded filename, during
+processing or a while after) and about uploads (an UNCONFIRMED_WRITE can leave a residue stuck
+in PREPARING). Each upload therefore waits for the source to be ready, checks the title and
+renames it if needed; all titles are checked once more after the last upload.
 """
 
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any, Callable, Optional
+
+from notebooklm import NotebookLMError, Source
 
 from research_toolkit.notebook import client as notebook_client
 from research_toolkit.notebook.client import NotebookClient
-from research_toolkit.notebook.fulltext import add_fulltext_source, upload_kind
+from research_toolkit.notebook.fulltext import URL_KIND, upload_kind, upload_target
 from research_toolkit.notebook.resolve import NotebookResolutionError, resolve_notebook
 from research_toolkit.notebook.titles import source_key, source_title
 from research_toolkit.zotero.manager import ZoteroManager
 from research_toolkit.zotero.models import ZoteroItem
 
 Progress = Callable[[str], None]
+
+READY_TIMEOUT = 180.0
 
 
 class SyncError(Exception):
@@ -72,6 +82,7 @@ async def _sync_items(
             "added": [],
             "skipped_existing": [],
             "missing_fulltext": [],
+            "renamed": [],
             "failed": [],
             "extra_attachments": [
                 {**_entry(item), "count": item.extra_attachments}
@@ -79,7 +90,9 @@ async def _sync_items(
                 if item.fulltext_kind and item.extra_attachments
             ],
         }
-        existing = {source_key(s.title) for s in await client.sources.list(notebook.id)}
+        sources = await client.sources.list(notebook.id)
+        existing = {source_key(s.title) for s in sources}
+        uploader = _Uploader(client, notebook.id, report, progress, {s.id for s in sources})
 
         for item in items:
             kind = upload_kind(item, allow_url)
@@ -88,25 +101,98 @@ async def _sync_items(
             elif kind is None:
                 report["missing_fulltext"].append(_entry(item))
             else:
-                await _upload(client, notebook.id, item, kind, report, progress)
+                await uploader.upload(item, kind)
+        await uploader.recheck_titles()
         return report
 
 
-async def _upload(
-    client: NotebookClient,
-    notebook_id: str,
-    item: ZoteroItem,
-    kind: str,
-    report: dict[str, Any],
-    progress: Progress,
-) -> None:
-    progress(f"Uploading [{item.key}] ({kind}) {item.title[:60]}")
-    try:
-        await add_fulltext_source(
-            client, notebook_id, item, kind, source_title(item.key, item.title)
-        )
-    except Exception as e:  # one paper failing must not stop the run
-        progress(f"  failed: {e}")
-        report["failed"].append({**_entry(item), "error": str(e)})
-        return
-    report["added"].append({**_entry(item), "kind": kind})
+class _Uploader:
+    """Uploads papers one at a time into one notebook and keeps their titles right.
+
+    Fills the report's `added`, `renamed` and `failed` lists.
+    """
+
+    def __init__(
+        self,
+        client: NotebookClient,
+        notebook_id: str,
+        report: dict[str, Any],
+        progress: Progress,
+        known_ids: set[str],
+    ) -> None:
+        self.client = client
+        self.notebook_id = notebook_id
+        self.report = report
+        self.progress = progress
+        self.known_ids = known_ids  # sources not left behind by the upload in progress
+        self.uploaded: dict[str, ZoteroItem] = {}  # source id -> item, added in this run
+
+    async def upload(self, item: ZoteroItem, kind: str) -> None:
+        """Upload -> wait until ready -> fix the title. Any failure goes to `failed`."""
+        self.progress(f"Uploading [{item.key}] ({kind}) {item.title[:60]}")
+        wanted = source_title(item.key, item.title)
+        try:
+            with upload_target(item, kind) as target:
+                source = await self._add(target, wanted, is_url=kind == URL_KIND)
+            self.known_ids.add(source.id)
+            ready = await self.client.sources.wait_until_ready(
+                self.notebook_id, source.id, timeout=READY_TIMEOUT
+            )
+            await self._ensure_title(ready, item)
+        except Exception as e:  # one paper failing must not stop the run
+            self.progress(f"  failed: {e}")
+            self.report["failed"].append({**_entry(item), "error": str(e)})
+            return
+        self.uploaded[source.id] = item
+        self.report["added"].append({**_entry(item), "kind": kind})
+
+    async def recheck_titles(self) -> None:
+        """Catches titles the server reset after the per-paper check."""
+        if not self.uploaded:
+            return
+        for source in await self.client.sources.list(self.notebook_id):
+            item = self.uploaded.get(source.id)
+            if item is not None:
+                await self._ensure_title(source, item)
+
+    async def _add(self, target: str, wanted: str, is_url: bool) -> Source:
+        """add_file (or add_url); after an UNCONFIRMED_WRITE, removes its residue, retries once."""
+        sources = self.client.sources
+        for attempt in (1, 2):
+            try:
+                if is_url:
+                    return await sources.add_url(self.notebook_id, target, title=wanted)
+                return await sources.add_file(self.notebook_id, target, title=wanted)
+            except NotebookLMError as e:
+                if not e.unconfirmed:
+                    raise
+                self.progress(f"  unconfirmed upload ({e}); removing its residue")
+                landed = await self._clean_residue(
+                    target if is_url else Path(target).name, wanted
+                )
+                if landed is not None:
+                    return landed
+                if attempt == 2:
+                    raise
+        raise AssertionError("unreachable")
+
+    async def _clean_residue(self, filename: str, wanted: str) -> Optional[Source]:
+        """Deletes new non-ready sources left by a failed upload; returns one that did land."""
+        landed = None
+        for source in await self.client.sources.list(self.notebook_id):
+            if source.id in self.known_ids or source.title not in (filename, wanted):
+                continue
+            if source.is_ready and landed is None:
+                landed = source
+            else:
+                await self.client.sources.delete(self.notebook_id, source.id)
+        return landed
+
+    async def _ensure_title(self, source: Source, item: ZoteroItem) -> None:
+        wanted = source_title(item.key, item.title)
+        if source.title == wanted:
+            return
+        self.progress(f"  title is '{source.title}'; renaming to '{wanted}'")
+        await self.client.sources.rename(self.notebook_id, source.id, wanted)
+        if item.key not in {e["key"] for e in self.report["renamed"]}:
+            self.report["renamed"].append(_entry(item))

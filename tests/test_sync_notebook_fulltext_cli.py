@@ -99,6 +99,16 @@ class SyncNotebookFulltextTest(unittest.TestCase):
             report["extra_attachments"], [{"key": "K1", "title": "储能政策解读", "count": 1}]
         )
 
+    def test_unconfirmed_snapshot_upload_leaves_no_markdown_residue(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "储能政策解读", pdf=False)
+        self.zotero.add_html_snapshot(self.col, "K1", "<p>body</p>")
+        self.fake.unconfirmed_uploads["[K1]"] = 1
+
+        report = self.report(self.run_sync())
+
+        self.assertEqual(report["added"], [{"key": "K1", "title": "储能政策解读", "kind": "html"}])
+        self.assertEqual(self.fake.source_titles(report["notebook_id"]), ["[K1] 储能政策解读"])
+
     def test_item_without_any_file_is_missing_fulltext(self) -> None:
         self.zotero.add_paper(self.col, "K1", "Linked only", pdf=False)
         self.zotero.add_link(self.col, "K1")
