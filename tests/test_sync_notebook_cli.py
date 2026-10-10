@@ -283,6 +283,31 @@ class SyncNotebookCliTest(unittest.TestCase):
         self.assertEqual(report["failed"], [])
         self.assertEqual(len(self.fake.source_titles(nb_id)), 300)
 
+    def test_stale_listing_cannot_resurrect_successfully_deleted_capacity(self) -> None:
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        nb_id = self.fake.add_notebook(
+            COLLECTION, ["[K1] Old", "[K1] Duplicate"] + [f"[OLD{i}] Paper" for i in range(298)]
+        )
+        before_deletion = list(self.fake.state[nb_id].sources)
+        list_sources = self.fake.sources.list
+        stale_sent = False
+
+        async def lagging_list(notebook_id: str) -> Any:
+            nonlocal stale_sent
+            current = await list_sources(notebook_id)
+            if len(current) == 298 and not stale_sent:
+                stale_sent = True
+                return before_deletion
+            return current
+
+        with patch.object(self.fake.sources, "list", lagging_list):
+            report = self.report(self.run_sync("--collection", COLLECTION, "--replace", "K1"))
+
+        self.assertEqual(set(self.keys(report["added"])), {"K1", "K2"})
+        self.assertEqual(report["failed"], [])
+        self.assertEqual(len(self.fake.source_titles(nb_id)), 300)
+
     def test_title_reverted_to_filename_on_upload_is_renamed(self) -> None:
         self.zotero.add_paper(self.col, "K1", "Green AI")
         self.zotero.add_paper(self.col, "K2", "Energy and Policy")

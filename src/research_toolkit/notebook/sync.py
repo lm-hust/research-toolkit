@@ -193,7 +193,7 @@ async def _sync_items(
                 for old in planned.replaces:
                     progress(f"Deleting old source {old.title} ({old.id}) for --replace")
                     await client.sources.delete(notebook.id, old.id)
-                    uploader.known_ids.discard(old.id)
+                    uploader.source_deleted(old.id)
                     report["replaced"].append(_source_entry(old))
             except Exception as e:
                 progress(f"  failed: {e}")
@@ -223,7 +223,13 @@ class _Uploader:
         self.report = report
         self.progress = progress
         self.known_ids = known_ids  # sources not left behind by the upload in progress
+        self.deleted_ids: set[str] = set()  # confirmed deletes may linger in stale listings
         self.uploaded: dict[str, ZoteroItem] = {}  # source id -> item, added in this run
+
+    def source_deleted(self, source_id: str) -> None:
+        """Record a confirmed delete so stale listings cannot consume its freed capacity."""
+        self.known_ids.discard(source_id)
+        self.deleted_ids.add(source_id)
 
     async def upload(self, item: ZoteroItem, kind: str) -> None:
         """Upload -> wait until ready -> fix the title. Any failure goes to `failed`."""
@@ -236,6 +242,7 @@ class _Uploader:
             # even when its residue cleanup failed. Retain known IDs to tolerate lagging lists.
             self.known_ids.update(
                 src.id for src in await self.client.sources.list(self.notebook_id)
+                if src.id not in self.deleted_ids
             )
             if len(self.known_ids) >= SOURCE_LIMIT:
                 raise SyncError(
@@ -326,14 +333,14 @@ class _Uploader:
         """Deletes new non-ready sources left by a failed upload; returns one that did land."""
         landed = None
         for source in await self.client.sources.list(self.notebook_id):
-            if source.id in self.known_ids or source.title not in (filename, wanted):
+            if source.id in self.known_ids or source.id in self.deleted_ids or source.title not in (filename, wanted):
                 continue
             self.known_ids.add(source.id)
             if source.is_ready and landed is None:
                 landed = source
             else:
                 await self.client.sources.delete(self.notebook_id, source.id)
-                self.known_ids.discard(source.id)
+                self.source_deleted(source.id)
         return landed
 
     async def _ensure_title(self, source: Source, item: ZoteroItem) -> None:
