@@ -98,6 +98,21 @@ class SkimNotebookCliTest(unittest.TestCase):
         self.assertEqual(report["failed"], [])
         self.assertFalse(report["saved_history_note"])
 
+    def test_nested_bullets_and_inline_code_keep_their_structure(self) -> None:
+        self.fake.answers[self.k1_source] = (
+            "## 方法与数据\n* **模型**：\n    * 特定任务模型\n    * 通用模型 `bloomz-7b`\n* 硬件：A100",
+            [],
+        )
+
+        self.report(self.run_skim("--notebook", NOTEBOOK, "--key", "K1"))
+
+        html = self.zotero.created_notes[0]["note"]
+        self.assertIn(
+            "<ul><li><strong>模型</strong>：<ul><li>特定任务模型</li>"
+            "<li>通用模型 <code>bloomz-7b</code></li></ul></li><li>硬件：A100</li></ul>",
+            html,
+        )
+
     def test_ask_is_restricted_to_the_paper_and_asks_for_the_five_sections(self) -> None:
         self.report(self.run_skim("--notebook", NOTEBOOK, "--key", "K1"))
 

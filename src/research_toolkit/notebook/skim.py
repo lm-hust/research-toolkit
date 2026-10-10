@@ -65,21 +65,40 @@ def build_prompt() -> str:
 
 def _inline(text: str) -> str:
     escaped = html.escape(text, quote=False)
+    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
     return re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
 
 
+def _list_html(items: list[tuple[int, str]]) -> str:
+    """Nests (indent, item html) pairs into <ul>s by indentation."""
+    out: list[str] = []
+    open_indents: list[int] = []
+    for indent, text in items:
+        if not open_indents or indent > open_indents[-1]:
+            out.append("<ul>")
+            open_indents.append(indent)
+        else:
+            while len(open_indents) > 1 and indent < open_indents[-1]:
+                out.append("</li></ul>")
+                open_indents.pop()
+            out.append("</li>")
+        out.append(f"<li>{text}")
+    out.append("</li></ul>" * len(open_indents))
+    return "".join(out)
+
+
 def markdown_to_html(markdown: str) -> str:
-    """Minimal markdown -> Zotero note HTML: headings, bullet/numbered lists, paragraphs."""
+    """Minimal markdown -> Zotero note HTML: headings, nested lists, paragraphs, bold, code."""
     out: list[str] = []
     para: list[str] = []
-    items: list[str] = []
+    items: list[tuple[int, str]] = []
 
     def flush() -> None:
         if para:
             out.append(f"<p>{'<br/>'.join(para)}</p>")
             para.clear()
         if items:
-            out.append(f"<ul>{''.join(f'<li>{i}</li>' for i in items)}</ul>")
+            out.append(_list_html(items))
             items.clear()
 
     for raw in markdown.splitlines():
@@ -95,7 +114,8 @@ def markdown_to_html(markdown: str) -> str:
         elif bullet:
             if para:
                 flush()
-            items.append(_inline(bullet.group(1)))
+            indent = len(raw.expandtabs(4)) - len(raw.expandtabs(4).lstrip())
+            items.append((indent, _inline(bullet.group(1))))
         else:
             if items:
                 flush()
@@ -141,7 +161,7 @@ def render_note(
     provenance = _provenance(result.references)
     if provenance:
         parts.append("<h2>出处（cited_text 片段）</h2>")
-        parts.append(f"<ol>{''.join(provenance)}</ol>")
+        parts.append(f"<ul>{''.join(provenance)}</ul>")
     return "\n".join(parts)
 
 
