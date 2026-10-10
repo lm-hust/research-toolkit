@@ -457,6 +457,22 @@ class SkimRelevanceTest(unittest.TestCase):
         self.assertEqual([w["relevance"] for w in report["written"]], ["unparsed", "unparsed"])
         self.assertEqual(report["relevance"], {"high": 0, "medium": 0, "low": 0, "unparsed": 2})
 
+    def test_rerun_repairs_failed_relevance_tag_without_asking_again(self) -> None:
+        self.answer_with_relevance(self.k1_source, "高")
+        self.zotero.tag_errors["K1"] = RuntimeError("Zotero 412")
+        first = self.run_skim("--key", "K1", "--focus", FOCUS)
+        self.assertEqual(len(first["failed"]), 1)
+        quota_after_first = self.fake.quota_remaining_percent
+        self.zotero.tag_errors.clear()
+
+        resumed = self.run_skim("--key", "K1", "--focus", FOCUS)
+
+        self.assertEqual(self.zotero.item_tags["K1"], [{"tag": f"{RELEVANCE_TAG}high"}])
+        self.assertEqual(resumed["failed"], [])
+        self.assertEqual(resumed["skipped"][0]["relevance"], "high")
+        self.assertEqual(self.fake.quota_remaining_percent, quota_after_first)
+        self.assertEqual(len(self.zotero.created_notes), 1)
+
     def test_a_tagging_failure_is_reported_with_the_written_note(self) -> None:
         self.answer_with_relevance(self.k1_source, "高")
         self.zotero.tag_errors["K1"] = RuntimeError("Zotero 412")

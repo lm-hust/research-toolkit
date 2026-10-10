@@ -208,9 +208,15 @@ def render_note(
     if focus:
         lines.append(f"研究问题：{html.escape(focus, quote=False)}")
     header = "<br/>".join(lines)
+    relevance = parse_relevance(result.answer) if focus else None
+    metadata = (
+        f' data-gemini-skim-focus="{html.escape(focus or "", quote=True)}"'
+        f' data-gemini-skim-relevance="{relevance}"'
+        if relevance else ""
+    )
     parts = [
         f"<h1>{html.escape(NOTE_TITLE_PREFIX + target.title, quote=False)}</h1>",
-        f"<p>{header}</p>",
+        f"<p{metadata}>{header}</p>",
         markdown_to_html(result.answer),
     ]
     provenance = _provenance(result.references)
@@ -308,7 +314,7 @@ async def _skim(
             if key and key not in by_key:
                 by_key[key] = SkimTarget(key, source_paper_title(src.title), src.id)
 
-        pending = _plan(zotero, by_key, keys or list(by_key), refresh, report)
+        pending = _plan(zotero, by_key, keys or list(by_key), refresh, report, focus)
         report["quota_before"] = await _check_quota(client, len(pending), progress, confirm)
 
         own_conversations: set[str] = set()
@@ -335,6 +341,7 @@ def _plan(
     keys: list[str],
     refresh: bool,
     report: dict[str, Any],
+    focus: Optional[str] = None,
 ) -> list[_Pending]:
     """Papers to ask about; unknown keys go to `failed`, already-skimmed ones to `skipped`."""
     pending: list[_Pending] = []
@@ -353,7 +360,24 @@ def _plan(
             continue
         existing = notes[0] if notes else None
         if existing is not None and not refresh:
-            report["skipped"].append({**entry, "note_key": existing["key"]})
+            entry["note_key"] = existing["key"]
+            # A note may have landed before its relevance tag write failed. Reuse its
+            # stored judgement only for the exact same focus, without another ask.
+            marker = f'data-gemini-skim-focus="{html.escape(focus or "", quote=True)}"'
+            stored = existing.get("note", "")
+            match = re.search(r'data-gemini-skim-relevance="(high|medium|low)"', stored)
+            if focus and marker in stored and match:
+                level = match.group(1)
+                try:
+                    zotero.replace_tags_with_prefix(
+                        target.key, RELEVANCE_TAG_PREFIX, [RELEVANCE_TAG_PREFIX + level]
+                    )
+                except Exception as e:
+                    report["failed"].append({**entry, "error": f"Relevance tag not set: {e}"})
+                    continue
+                entry["relevance"] = level
+                report["relevance"][level] += 1
+            report["skipped"].append(entry)
             continue
         pending.append(_Pending(target, existing))
     return pending
@@ -401,7 +425,7 @@ async def _skim_one(
             note_key = zotero.create_child_note(target.key, note, [SKIM_NOTE_TAG])
         else:
             note_key = existing["key"]
-            zotero.update_note(note_key, note, existing["version"])
+            zotero.update_note(existing, note)
     except Exception as e:  # one paper failing must not stop the run
         progress(f"  failed: {e}")
         report["failed"].append({**entry, "error": str(e)})

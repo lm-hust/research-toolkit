@@ -163,8 +163,9 @@ class FakeZoteroLibrary(ZoteroClient):
             if n["parentItem"] == parent_key and tag in n["tags"]
         ]
 
-    def update_note(self, note_key: str, note_html: str, version: int) -> None:
+    def update_note(self, existing: Dict[str, Any], note_html: str) -> None:
         """Records into `updated_notes`; `update_errors[note_key]` makes it raise."""
+        note_key, version = existing["key"], existing["version"]
         if note_key in self.update_errors:
             raise self.update_errors[note_key]
         note = next(n for n in self.created_notes if n["key"] == note_key)

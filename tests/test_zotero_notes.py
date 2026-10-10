@@ -153,7 +153,7 @@ class UpdateNoteTest(unittest.TestCase):
         resp.__enter__.return_value = resp
         urlopen.return_value = resp
 
-        self.client.update_note("NOTE1234", "<h1>Gemini 初读：X</h1><p>new</p>", 41)
+        self.client.update_note({"key": "NOTE1234", "version": 41}, "<h1>Gemini 初读：X</h1><p>new</p>")
 
         req = urlopen.call_args[0][0]
         self.assertEqual(req.get_method(), "PATCH")
@@ -168,7 +168,7 @@ class UpdateNoteTest(unittest.TestCase):
         )
 
         with self.assertRaises(ZoteroWriteError) as ctx:
-            self.client.update_note("NOTE1234", "<p>x</p>", 41)
+            self.client.update_note({"key": "NOTE1234", "version": 41}, "<p>x</p>")
         self.assertIn("NOTE1234", str(ctx.exception))
         self.assertIn("412", str(ctx.exception))
 

@@ -4,7 +4,7 @@ Both run from the research-toolkit checkout as `uv run research-toolkit <command
 
 ## sync-notebook: Zotero collections into a notebook
 
-Each Zotero item becomes one source titled `[KEY] Title`, from its first PDF, else an EPUB, else its HTML snapshot converted to markdown. A source counts as already synced by its `[KEY]` prefix alone, so re-running uploads only what is new and resumes an interrupted run.
+Each Zotero item becomes one source titled `[KEY] Title`, from its first PDF, else an EPUB, else its HTML snapshot converted to markdown. The `[KEY]` prefix identifies an existing source. On rerun, ready sources are skipped; sources still processing are waited on and reported as failed if they remain unready, without uploading duplicates.
 
 | Option | Use |
 |---|---|
@@ -18,7 +18,7 @@ Each Zotero item becomes one source titled `[KEY] Title`, from its first PDF, el
 
 **Plan first.** Run `--dry-run`, show the user the plan (counts of `added`, `skipped_existing`, `missing_fulltext`, `orphaned`, and `projected_source_count`), and run for real after they agree. Uploads take about 10 s per paper.
 
-**Hand-maintained notebooks.** The Identity Notebook is maintained by hand and is never synced. `--force` is for a notebook the user confirms is meant to receive Zotero papers.
+**Hand-maintained notebooks.** The Identity Notebook is maintained by hand: sync rejects it even with `--force` or its UUID. `--force` is for another notebook the user confirms is meant to receive Zotero papers.
 
 Report fields:
 
@@ -28,7 +28,7 @@ Report fields:
 - `replaced[]`, `skipped_existing[]`, `renamed[]` (titles the server reset to the filename and the run renamed back).
 - `missing_fulltext[]`: items with nothing to upload; the user needs to add a full text in Zotero (or rerun with `--allow-url`).
 - `orphaned[]` (`key`, `title`, `source_id`): sources in the notebook that are not in the given collections. Reported only, never deleted.
-- `failed[]` (`key`, `title`, `error`): rerun to retry them.
+- `failed[]` (`key`, `title`, `error`): rerun to retry upload or readiness failures. Final title-check failures also carry `source_id`; the upload may already be in `added[]`. Inspect that source in the notebook before retrying, since a title left as a filename cannot be matched by key and may cause a duplicate upload. Have the user restore its `[KEY] Title` in the web UI.
 - `extra_attachments[]` (`key`, `title`, `count`): items with more attachments than the one uploaded (supplements were not synced).
 - `source_count`, `projected_source_count`: sources now, and after this run.
 
@@ -44,7 +44,7 @@ For each `[KEY]` source: one structured question restricted to that source, in a
 | `--refresh` | re-read papers that already have a skim note (rewrites the same note) |
 | `--yes` | go on even when the quota looks too small |
 
-**Quota.** Without a terminal the run stops before skimming when the quota looks short, with `Error: Stopped before skimming...` and the shortfall on stderr. Relay the numbers; rerun with `--yes` only after the user agrees. An interrupted run resumes on rerun (skimmed papers are skipped).
+**Quota.** Without a terminal the run stops before skimming when the quota looks short, with `Error: Stopped before skimming...` and the shortfall on stderr. Relay the numbers; rerun with `--yes` only after the user agrees. An interrupted run resumes on rerun (skimmed papers are skipped). If the note was written but its relevance tag failed, rerun with the same `--focus`: the saved judgement repairs the tag without another ask or note rewrite. These repairs appear in `skipped[]` with `relevance` and count in the relevance distribution. Notes written by older versions without saved judgement metadata need `--refresh`.
 
 Report fields:
 

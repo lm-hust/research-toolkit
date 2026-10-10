@@ -157,6 +157,8 @@ async def _sync_items(
             notebook = await find_notebook(client, notebook_ref, default_title)
         except NotebookResolutionError as e:
             raise SyncError(str(e)) from e
+        if notebook is not None and notebook.title == "Identity":
+            raise SyncError("Identity is maintained by hand and must never receive Zotero syncs.")
         sources = await client.sources.list(notebook.id) if notebook else []
         plan = plan_sync(items, sources, replace_keys=replace, force=force, allow_url=allow_url)
         report = _plan_report(notebook, notebook_ref or default_title, plan, dry_run)
@@ -179,11 +181,21 @@ async def _sync_items(
         )
 
         uploader = _Uploader(client, notebook.id, report, progress, {s.id for s in sources})
+        existing_by_key = {item.key: item for item in plan.existing}
+        for source in sources:
+            item = existing_by_key.get(source_key(source.title) or "")
+            if item is not None and not source.is_ready:
+                await uploader.resume(source, item)
         for planned in plan.uploads:
-            for old in planned.replaces:
-                progress(f"Deleting old source {old.title} ({old.id}) for --replace")
-                await client.sources.delete(notebook.id, old.id)
-                report["replaced"].append(_source_entry(old))
+            try:
+                for old in planned.replaces:
+                    progress(f"Deleting old source {old.title} ({old.id}) for --replace")
+                    await client.sources.delete(notebook.id, old.id)
+                    report["replaced"].append(_source_entry(old))
+            except Exception as e:
+                progress(f"  failed: {e}")
+                report["failed"].append({**_entry(planned.item), "error": str(e)})
+                continue
             await uploader.upload(planned.item, planned.kind)
         await uploader.recheck_titles()
         return report
@@ -229,14 +241,46 @@ class _Uploader:
         self.uploaded[source.id] = item
         self.report["added"].append({**_entry(item), "kind": kind})
 
+    async def resume(self, source: Source, item: ZoteroItem) -> None:
+        """Wait for an earlier interrupted upload; never silently skip an unready source."""
+        self.progress(f"Waiting for existing source [{item.key}] to become ready")
+        try:
+            ready = await self.client.sources.wait_until_ready(
+                self.notebook_id, source.id, timeout=READY_TIMEOUT
+            )
+            await self._ensure_title(ready, item)
+        except Exception as e:
+            self.progress(f"  failed: {e}")
+            self.report["skipped_existing"] = [
+                entry for entry in self.report["skipped_existing"] if entry["key"] != item.key
+            ]
+            self.report["failed"].append({**_entry(item), "error": str(e)})
+            return
+        self.uploaded[source.id] = item
+
     async def recheck_titles(self) -> None:
         """Catches titles the server reset after the per-paper check."""
         if not self.uploaded:
             return
-        for source in await self.client.sources.list(self.notebook_id):
+        try:
+            sources = await self.client.sources.list(self.notebook_id)
+        except Exception as e:
+            self.progress(f"  final source listing failed: {e}")
+            for source_id, uploaded_item in self.uploaded.items():
+                self.report["failed"].append(
+                    {**_entry(uploaded_item), "source_id": source_id, "error": f"Final title check: {e}"}
+                )
+            return
+        for source in sources:
             item = self.uploaded.get(source.id)
             if item is not None:
-                await self._ensure_title(source, item)
+                try:
+                    await self._ensure_title(source, item)
+                except Exception as e:
+                    self.progress(f"  final title check failed for [{item.key}]: {e}")
+                    self.report["failed"].append(
+                        {**_entry(item), "source_id": source.id, "error": f"Final title check: {e}"}
+                    )
 
     async def _add(self, target: str, wanted: str, is_url: bool) -> Source:
         """add_file (or add_url); after an UNCONFIRMED_WRITE, removes its residue, retries once."""

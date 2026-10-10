@@ -240,11 +240,13 @@ class ZoteroClient:
                 notes.append(data)
         return notes
 
-    def update_note(self, note_key: str, note_html: str, version: int) -> None:
+    def update_note(self, note: Dict[str, Any], note_html: str) -> None:
         """
-        Replaces a note's body, leaving its tags and parent alone. `version` guards the write:
-        if the note changed since it was read, Zotero refuses (412) and this raises.
+        Replaces a note's body, leaving its tags and parent alone. Accepts the complete note
+        returned by find_child_notes; its version guards against concurrent edits (HTTP 412).
         """
+        note_key = note["key"]
+        version = note["version"]
         try:
             self._request(
                 "PATCH",
