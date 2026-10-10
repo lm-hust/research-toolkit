@@ -14,7 +14,7 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Protocol
 
-from notebooklm import AskResult, Note, Notebook, NotebookLMClient, Source
+from notebooklm import AskResult, Note, Notebook, NotebookLMClient, Source, UsageSummary
 from notebooklm.options import AndroidBackendConfig, ClientConfig
 
 
@@ -80,6 +80,10 @@ class NotesApi(Protocol):
     async def create(self, notebook_id: str, title: str = "New Note", content: str = "") -> Note: ...
 
 
+class SettingsApi(Protocol):
+    async def get_usage(self) -> UsageSummary: ...
+
+
 class NotebookClient(Protocol):
     @property
     def notebooks(self) -> NotebooksApi: ...
@@ -92,6 +96,9 @@ class NotebookClient(Protocol):
 
     @property
     def notes(self) -> NotesApi: ...
+
+    @property
+    def settings(self) -> SettingsApi: ...
 
 
 def open_client() -> AbstractAsyncContextManager[NotebookClient]:

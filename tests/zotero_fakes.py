@@ -11,7 +11,10 @@ Usage:
     with patch("research_toolkit.cli.ZoteroManager", lib.manager):
         ...
 
-Writes are recorded, not sent: `created_notes` (knob `note_errors = {parent key: exc}`).
+Writes are recorded, not sent: `created_notes` (knob `note_errors = {parent key: exc}`) and
+`updated_notes` (knob `update_errors = {note key: exc}`). `created_notes` doubles as the
+library's child notes: arrange an existing one with `add_note(parent_key, html, tags)`;
+`find_child_notes` serves from it and `update_note` rewrites it in place (bumping `version`).
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ class FakeZoteroLibrary(ZoteroClient):
         self.rows: Dict[str, List[Dict[str, Any]]] = {}
         self.created_notes: List[Dict[str, Any]] = []
         self.note_errors: Dict[str, Exception] = {}
+        self.updated_notes: List[Dict[str, Any]] = []
+        self.update_errors: Dict[str, Exception] = {}
 
     def _request(self, *args: Any, **kwargs: Any) -> Any:
         raise AssertionError(f"unexpected Zotero HTTP call: {args} {kwargs}")
@@ -137,9 +142,31 @@ class FakeZoteroLibrary(ZoteroClient):
         """Records the note in `created_notes`; `note_errors[parent_key]` makes it raise."""
         if parent_key in self.note_errors:
             raise self.note_errors[parent_key]
+        return self.add_note(parent_key, note_html, tags)
+
+    def add_note(self, parent_key: str, note_html: str, tags: List[str]) -> str:
+        """Arranges an existing child note (also what create_child_note records)."""
         key = f"N{len(self.created_notes):07d}"
-        self.created_notes.append({"key": key, "parentItem": parent_key, "note": note_html, "tags": list(tags)})
+        self.created_notes.append(
+            {"key": key, "parentItem": parent_key, "note": note_html, "tags": list(tags), "version": 1}
+        )
         return key
+
+    def find_child_notes(self, parent_key: str, tag: str) -> List[Dict[str, Any]]:
+        return [
+            {"key": n["key"], "version": n["version"], "note": n["note"], "tags": [{"tag": t} for t in n["tags"]]}
+            for n in self.created_notes
+            if n["parentItem"] == parent_key and tag in n["tags"]
+        ]
+
+    def update_note(self, note_key: str, note_html: str, version: int) -> None:
+        """Records into `updated_notes`; `update_errors[note_key]` makes it raise."""
+        if note_key in self.update_errors:
+            raise self.update_errors[note_key]
+        note = next(n for n in self.created_notes if n["key"] == note_key)
+        self.updated_notes.append({"key": note_key, "note": note_html, "version": version})
+        note["note"] = note_html
+        note["version"] += 1
 
     def manager(self) -> ZoteroManager:
         return ZoteroManager(client=self, storage_dir=self.storage_dir)

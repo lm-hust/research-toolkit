@@ -33,6 +33,10 @@ before running) and consult it inside the API method the behaviour belongs to. E
   restricted to that one source; anything else gets a generic answer with no references.
 - `ask_errors`: {source id: exception to raise from chat.ask restricted to that source}.
 - `note_errors`: exception raised by notes.create (nothing is created), or None.
+- Quota (settings.get_usage): `quota_remaining_percent` (five-hour window, default 100),
+  `weekly_remaining_percent` (default 100), `qna_cost_percent` (estimated cost of one ask,
+  default 0.41; every ask spends it from both windows), `usage_status` (a UsageSummaryStatus;
+  anything but READY means no meter data). `usage_errors`: exception raised by get_usage.
 
 Chat mirrors the server: each notebook has one current conversation; ask() without a
 conversation id extends it (or starts one when there is none); delete_conversation drops it and
@@ -42,6 +46,7 @@ its history. Arrange one with `start_conversation(nb_id, [(q, a), ...])`; read
 
 from __future__ import annotations
 
+import datetime
 import itertools
 import uuid
 from collections.abc import AsyncIterator
@@ -59,6 +64,12 @@ from notebooklm import (
     Source,
     SourceStatus,
     SourceTimeoutError,
+    UsageAction,
+    UsageActionKind,
+    UsageSummary,
+    UsageSummaryStatus,
+    UsageWindow,
+    UsageWindowKind,
     ValidationError,
 )
 from notebooklm.outcomes import CommitState, OperationMetadata
@@ -205,6 +216,8 @@ class FakeChatAPI:
         if nb.conversation_id is None:
             nb.conversation_id = self._fake.next_id("conv")
         nb.history.append((question, answer))
+        self._fake.quota_remaining_percent -= self._fake.qna_cost_percent
+        self._fake.weekly_remaining_percent -= self._fake.qna_cost_percent
         return AskResult(
             answer=answer,
             conversation_id=nb.conversation_id,
@@ -245,6 +258,35 @@ class FakeNotesAPI:
         return note
 
 
+class FakeSettingsAPI:
+    def __init__(self, fake: FakeNotebookClient) -> None:
+        self._fake = fake
+
+    async def get_usage(self) -> UsageSummary:
+        fake = self._fake
+        if fake.usage_errors is not None:
+            raise fake.usage_errors
+        if fake.usage_status is not UsageSummaryStatus.READY:
+            return UsageSummary(status=fake.usage_status)
+        resets = datetime.datetime(2026, 10, 10, 18, 0, tzinfo=datetime.timezone.utc)
+        windows = tuple(
+            UsageWindow(kind=kind, used_percent=100.0 - left, remaining_percent=left, resets_at=resets)
+            for kind, left in (
+                (UsageWindowKind.FIVE_HOUR, fake.quota_remaining_percent),
+                (UsageWindowKind.WEEKLY, fake.weekly_remaining_percent),
+            )
+        )
+        qna = UsageAction(
+            code=UsageActionKind.QNA.value,
+            kind=UsageActionKind.QNA,
+            has_sufficient_quota=fake.quota_remaining_percent >= fake.qna_cost_percent,
+            cost_tier=None,
+            remaining_deferred_artifact_generations=None,
+            estimated_cost_percent=fake.qna_cost_percent,
+        )
+        return UsageSummary(status=UsageSummaryStatus.READY, windows=windows, actions=(qna,))
+
+
 class FakeNotebookClient:
     def __init__(self) -> None:
         self.state: dict[str, FakeNotebookState] = {}
@@ -259,11 +301,17 @@ class FakeNotebookClient:
         self.unconfirmed_uploads: dict[str, int] = {}
         self.processing_timeouts: set[str] = set()
         self.late_resets: dict[str, str] = {}  # source id -> filename, pending a late reset
+        self.quota_remaining_percent = 100.0
+        self.weekly_remaining_percent = 100.0
+        self.qna_cost_percent = 0.41
+        self.usage_status = UsageSummaryStatus.READY
+        self.usage_errors: Exception | None = None
         self._ids = itertools.count(1)
         self.notebooks = FakeNotebooksAPI(self)
         self.sources = FakeSourcesAPI(self)
         self.chat = FakeChatAPI(self)
         self.notes = FakeNotesAPI(self)
+        self.settings = FakeSettingsAPI(self)
 
     # --- arrange helpers -------------------------------------------------
     def add_notebook(self, title: str, source_titles: list[str] | tuple[str, ...] = ()) -> str:
