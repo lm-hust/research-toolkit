@@ -222,7 +222,7 @@ class SyncNotebookCliTest(unittest.TestCase):
 
     def test_final_source_listing_failure_preserves_successful_upload_report(self) -> None:
         self.zotero.add_paper(self.col, "K1", "Green AI")
-        with patch.object(self.fake.sources, "list", AsyncMock(side_effect=RuntimeError("list refused"))):
+        with patch.object(self.fake.sources, "list", AsyncMock(side_effect=[[], RuntimeError("list refused")])):
             report = self.report(self.run_sync("--collection", COLLECTION))
 
         self.assertEqual(self.keys(report["added"]), ["K1"])
@@ -255,6 +255,33 @@ class SyncNotebookCliTest(unittest.TestCase):
         self.assertEqual(failed["source_id"], self.fake.state[nb_id].sources[0].id)
         self.assertIn("Title check", failed["error"])
         self.assertEqual(len(self.fake.source_titles(nb_id)), 1)
+
+    def test_unconfirmed_residue_counts_toward_capacity_when_cleanup_fails(self) -> None:
+        for key in ("K1", "K2", "K3"):
+            self.zotero.add_paper(self.col, key, f"Paper {key}")
+        nb_id = self.fake.add_notebook(
+            COLLECTION, ["[K1] Old", "[K1] Duplicate"] + [f"[OLD{i}] Paper" for i in range(297)]
+        )
+        self.fake.unconfirmed_uploads["[K2]"] = 1
+        with patch.object(self.fake.sources, "delete", AsyncMock(side_effect=RuntimeError("delete refused"))):
+            report = self.report(self.run_sync("--collection", COLLECTION, "--replace", "K1"))
+
+        self.assertEqual(report["added"], [])
+        self.assertEqual(self.keys(report["failed"]), ["K1", "K2", "K3"])
+        self.assertEqual(len(self.fake.source_titles(nb_id)), 300)
+
+    def test_replacements_free_capacity_before_new_papers_even_if_listed_later(self) -> None:
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        nb_id = self.fake.add_notebook(
+            COLLECTION, ["[K1] Old", "[K1] Duplicate"] + [f"[OLD{i}] Paper" for i in range(298)]
+        )
+
+        report = self.report(self.run_sync("--collection", COLLECTION, "--replace", "K1"))
+
+        self.assertEqual(set(self.keys(report["added"])), {"K1", "K2"})
+        self.assertEqual(report["failed"], [])
+        self.assertEqual(len(self.fake.source_titles(nb_id)), 300)
 
     def test_title_reverted_to_filename_on_upload_is_renamed(self) -> None:
         self.zotero.add_paper(self.col, "K1", "Green AI")

@@ -186,7 +186,9 @@ async def _sync_items(
             item = existing_by_key.get(source_key(source.title) or "")
             if item is not None and not source.is_ready:
                 await uploader.resume(source, item)
-        for planned in plan.uploads:
+        # Replacement deletions may free capacity needed by additions, regardless of
+        # the order Zotero listed the papers in. Keep each replacement's delete/upload together.
+        for planned in sorted(plan.uploads, key=lambda upload: not upload.replaces):
             try:
                 for old in planned.replaces:
                     progress(f"Deleting old source {old.title} ({old.id}) for --replace")
@@ -230,6 +232,11 @@ class _Uploader:
         source: Optional[Source] = None
         checking_title = False
         try:
+            # Reconcile before each upload: an uncertain write may have left a source
+            # even when its residue cleanup failed. Retain known IDs to tolerate lagging lists.
+            self.known_ids.update(
+                src.id for src in await self.client.sources.list(self.notebook_id)
+            )
             if len(self.known_ids) >= SOURCE_LIMIT:
                 raise SyncError(
                     f"The notebook already holds {len(self.known_ids)} sources; "
@@ -321,10 +328,12 @@ class _Uploader:
         for source in await self.client.sources.list(self.notebook_id):
             if source.id in self.known_ids or source.title not in (filename, wanted):
                 continue
+            self.known_ids.add(source.id)
             if source.is_ready and landed is None:
                 landed = source
             else:
                 await self.client.sources.delete(self.notebook_id, source.id)
+                self.known_ids.discard(source.id)
         return landed
 
     async def _ensure_title(self, source: Source, item: ZoteroItem) -> None:
