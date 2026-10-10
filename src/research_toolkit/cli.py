@@ -496,12 +496,10 @@ def check_notebook_auth() -> str:
     """
     import asyncio
 
-    from notebooklm import NotebookLMClient
-    from notebooklm.options import AndroidBackendConfig, ClientConfig
+    from research_toolkit.notebook import client as notebook_client
 
     async def _probe() -> int:
-        config = ClientConfig(backend=AndroidBackendConfig())
-        async with NotebookLMClient.from_storage(config=config) as client:
+        async with notebook_client.open_client() as client:
             return len(await client.notebooks.list())
 
     return f"Authenticated ({asyncio.run(_probe())} notebooks)"
