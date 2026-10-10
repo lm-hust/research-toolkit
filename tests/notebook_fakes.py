@@ -28,11 +28,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from notebooklm import Notebook, Source, SourceStatus
+from notebooklm import Notebook, Source, SourceStatus, ValidationError
 
 from research_toolkit.notebook.client import NotebookClient
 
 OPEN_CLIENT = "research_toolkit.notebook.client.open_client"
+HTML_SUFFIXES = (".html", ".htm", ".xhtml", ".xht")
 
 
 @dataclass
@@ -77,9 +78,27 @@ class FakeSourcesAPI:
         for needle, error in self._fake.upload_errors.items():
             if needle in (title or path.name):
                 raise error
+        if path.suffix.lower() in HTML_SUFFIXES:  # real client: notebooklm.ValidationError
+            raise ValidationError("HTML file uploads are not supported")
         src = self._fake.new_source(notebook_id, title or path.name)
         self._fake.uploaded_paths.append(path)
+        self._fake.uploaded_contents.append(path.read_bytes())
         return src
+
+    async def add_url(
+        self,
+        notebook_id: str,
+        url: str,
+        *,
+        wait: bool = False,
+        wait_timeout: float = 120.0,
+        title: str | None = None,
+    ) -> Source:
+        self._fake.writes.append(("add_url", notebook_id, title, url))
+        for needle, error in self._fake.upload_errors.items():
+            if needle in (title or url):
+                raise error
+        return self._fake.new_source(notebook_id, title or url)
 
 
 class FakeNotebookClient:
@@ -87,6 +106,7 @@ class FakeNotebookClient:
         self.state: dict[str, FakeNotebookState] = {}
         self.writes: list[tuple[Any, ...]] = []
         self.uploaded_paths: list[Path] = []
+        self.uploaded_contents: list[bytes] = []  # file bytes at upload time
         self.upload_errors: dict[str, Exception] = {}
         self._ids = itertools.count(1)
         self.notebooks = FakeNotebooksAPI(self)

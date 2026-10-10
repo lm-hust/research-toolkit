@@ -14,6 +14,7 @@ from typing import Any, Callable, Optional
 
 from research_toolkit.notebook import client as notebook_client
 from research_toolkit.notebook.client import NotebookClient
+from research_toolkit.notebook.fulltext import add_fulltext_source, upload_kind
 from research_toolkit.notebook.resolve import NotebookResolutionError, resolve_notebook
 from research_toolkit.notebook.titles import source_key, source_title
 from research_toolkit.zotero.manager import ZoteroManager
@@ -35,6 +36,7 @@ def sync_collection(
     collection_ref: str,
     notebook_ref: Optional[str] = None,
     progress: Progress = lambda _msg: None,
+    allow_url: bool = False,
 ) -> dict[str, Any]:
     """Syncs one Zotero collection (name or key) and returns the JSON-ready report."""
     try:
@@ -46,7 +48,7 @@ def sync_collection(
 
     progress(f"Resolving full texts in Zotero collection '{collection.name}'...")
     items = manager.list_fulltext_items(collection.key)
-    return asyncio.run(_sync_items(items, notebook_ref, collection.name, progress))
+    return asyncio.run(_sync_items(items, notebook_ref, collection.name, progress, allow_url))
 
 
 async def _sync_items(
@@ -54,6 +56,7 @@ async def _sync_items(
     notebook_ref: Optional[str],
     default_title: str,
     progress: Progress,
+    allow_url: bool,
 ) -> dict[str, Any]:
     async with notebook_client.open_client() as client:
         try:
@@ -70,16 +73,22 @@ async def _sync_items(
             "skipped_existing": [],
             "missing_fulltext": [],
             "failed": [],
+            "extra_attachments": [
+                {**_entry(item), "count": item.extra_attachments}
+                for item in items
+                if item.fulltext_kind and item.extra_attachments
+            ],
         }
         existing = {source_key(s.title) for s in await client.sources.list(notebook.id)}
 
         for item in items:
+            kind = upload_kind(item, allow_url)
             if item.key in existing:
                 report["skipped_existing"].append(_entry(item))
-            elif not item.pdf_path:
+            elif kind is None:
                 report["missing_fulltext"].append(_entry(item))
             else:
-                await _upload(client, notebook.id, item, report, progress)
+                await _upload(client, notebook.id, item, kind, report, progress)
         return report
 
 
@@ -87,17 +96,17 @@ async def _upload(
     client: NotebookClient,
     notebook_id: str,
     item: ZoteroItem,
+    kind: str,
     report: dict[str, Any],
     progress: Progress,
 ) -> None:
-    assert item.pdf_path
-    progress(f"Uploading [{item.key}] {item.title[:60]}")
+    progress(f"Uploading [{item.key}] ({kind}) {item.title[:60]}")
     try:
-        await client.sources.add_file(
-            notebook_id, item.pdf_path, title=source_title(item.key, item.title)
+        await add_fulltext_source(
+            client, notebook_id, item, kind, source_title(item.key, item.title)
         )
     except Exception as e:  # one paper failing must not stop the run
         progress(f"  failed: {e}")
         report["failed"].append({**_entry(item), "error": str(e)})
         return
-    report["added"].append(_entry(item))
+    report["added"].append({**_entry(item), "kind": kind})
