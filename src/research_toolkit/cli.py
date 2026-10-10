@@ -529,14 +529,23 @@ def sync_notebook(
 @click.option(
     "--key", "keys", multiple=True, required=True, help="Zotero item key of a `[key]` source (repeatable)."
 )
-def skim_notebook(notebook: str, keys: tuple[str, ...]) -> None:
+@click.option(
+    "--focus",
+    default=None,
+    help="Research question: rate each paper's relevance and tag it gemini-skim/relevance:<level>.",
+)
+def skim_notebook(notebook: str, keys: tuple[str, ...], focus: Optional[str]) -> None:
     """Skim `[key]` sources one by one in fresh conversations; write each as a Zotero child note.
 
     The notebook's existing conversation is saved as a notebook note before it is replaced.
     """
     try:
         report = notebook_skim.skim_notebook(
-            ZoteroManager().client, notebook, list(keys), progress=lambda m: click.echo(m, err=True)
+            ZoteroManager().client,
+            notebook,
+            list(keys),
+            progress=lambda m: click.echo(m, err=True),
+            focus=focus,
         )
     except notebook_skim.SkimError as e:
         click.echo(f"Error: {e}", err=True)

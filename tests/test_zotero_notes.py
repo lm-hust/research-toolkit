@@ -57,5 +57,57 @@ class CreateChildNoteTest(unittest.TestCase):
         self.assertIn("Parent item not found", str(ctx.exception))
 
 
+class ReplaceTagsWithPrefixTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = ZoteroClient(api_key="k", user_id="12345")
+
+    @patch("urllib.request.urlopen")
+    def test_replaces_prefixed_tags_and_keeps_the_others_verbatim(self, urlopen: MagicMock) -> None:
+        item = {
+            "key": "PAPER001",
+            "version": 42,
+            "data": {
+                "key": "PAPER001",
+                "tags": [
+                    {"tag": "energy"},
+                    {"tag": "gemini-skim/relevance:low"},
+                    {"tag": "auto-tag", "type": 1},
+                    {"tag": "gemini-skim/relevance:medium"},
+                ],
+            },
+        }
+        urlopen.side_effect = [response(item), response(None)]
+
+        self.client.replace_tags_with_prefix(
+            "PAPER001", "gemini-skim/relevance:", ["gemini-skim/relevance:high"]
+        )
+
+        get_req, patch_req = (c[0][0] for c in urlopen.call_args_list)
+        self.assertEqual(get_req.get_method(), "GET")
+        self.assertEqual(get_req.full_url, "https://api.zotero.org/users/12345/items/PAPER001")
+        self.assertEqual(patch_req.get_method(), "PATCH")
+        self.assertEqual(patch_req.full_url, "https://api.zotero.org/users/12345/items/PAPER001")
+        self.assertEqual(patch_req.get_header("If-unmodified-since-version"), "42")
+        self.assertEqual(
+            json.loads(patch_req.data),
+            {
+                "tags": [
+                    {"tag": "energy"},
+                    {"tag": "auto-tag", "type": 1},
+                    {"tag": "gemini-skim/relevance:high"},
+                ]
+            },
+        )
+
+    @patch("urllib.request.urlopen")
+    def test_nothing_is_written_when_the_tags_already_match(self, urlopen: MagicMock) -> None:
+        item = {"key": "P", "version": 3, "data": {"tags": [{"tag": "x"}, {"tag": "gemini-skim/relevance:high"}]}}
+        urlopen.side_effect = [response(item)]
+
+        self.client.replace_tags_with_prefix("P", "gemini-skim/relevance:", ["gemini-skim/relevance:high"])
+
+        self.assertEqual(urlopen.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

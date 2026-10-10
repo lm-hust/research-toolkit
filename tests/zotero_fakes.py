@@ -11,7 +11,8 @@ Usage:
     with patch("research_toolkit.cli.ZoteroManager", lib.manager):
         ...
 
-Writes are recorded, not sent: `created_notes` (knob `note_errors = {parent key: exc}`).
+Writes are recorded, not sent: `created_notes` (knob `note_errors = {parent key: exc}`) and
+`item_tags = {item key: [tag dicts]}` (arrange existing tags there; knob `tag_errors`).
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ class FakeZoteroLibrary(ZoteroClient):
         self.rows: Dict[str, List[Dict[str, Any]]] = {}
         self.created_notes: List[Dict[str, Any]] = []
         self.note_errors: Dict[str, Exception] = {}
+        self.item_tags: Dict[str, List[Dict[str, Any]]] = {}
+        self.tag_errors: Dict[str, Exception] = {}
 
     def _request(self, *args: Any, **kwargs: Any) -> Any:
         raise AssertionError(f"unexpected Zotero HTTP call: {args} {kwargs}")
@@ -140,6 +143,13 @@ class FakeZoteroLibrary(ZoteroClient):
         key = f"N{len(self.created_notes):07d}"
         self.created_notes.append({"key": key, "parentItem": parent_key, "note": note_html, "tags": list(tags)})
         return key
+
+    def replace_tags_with_prefix(self, item_key: str, prefix: str, new_tags: List[str]) -> None:
+        """Rewrites `item_tags[item_key]`; `tag_errors[item_key]` makes it raise."""
+        if item_key in self.tag_errors:
+            raise self.tag_errors[item_key]
+        kept = [t for t in self.item_tags.get(item_key, []) if not t["tag"].startswith(prefix)]
+        self.item_tags[item_key] = kept + [{"tag": t} for t in new_tags]
 
     def manager(self) -> ZoteroManager:
         return ZoteroManager(client=self, storage_dir=self.storage_dir)
