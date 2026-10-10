@@ -45,7 +45,7 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "TID"]
+select = ["E", "F", "W", "I", "TID", "SLF"]
 ignore = ["E501"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
@@ -55,7 +55,7 @@ ignore = ["E501"]
 "src/research_toolkit/discovery/clients.py" = ["TID251"]
 "src/research_toolkit/zotero/client.py" = ["TID251"]
 "src/research_toolkit/zotero/manager.py" = ["TID251"]
-"tests/*" = ["TID251"]
+"tests/*" = ["TID251", "SLF001"]
 
 [tool.mypy]
 python_version = "3.11"

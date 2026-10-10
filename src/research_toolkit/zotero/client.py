@@ -123,17 +123,9 @@ class ZoteroClient:
         self, name: str, parent_key: Optional[str] = None
     ) -> ZoteroCollection:
         """Finds collection by name or creates it in the personal library."""
-        collections_data = self._request("GET", "/collections")
-        for col in collections_data:
-            c_data = col.get("data", {})
-            if c_data.get("name", "").strip().lower() == name.strip().lower():
-                return ZoteroCollection(
-                    key=col.get("key", ""),
-                    name=c_data.get("name", name),
-                    parent_collection=c_data.get("parentCollection") or None,
-                    version=col.get("version", 0),
-                    user_id=self.user_id,
-                )
+        existing = self.get_collection(name)
+        if existing:
+            return existing
 
         # Create new collection
         payload = [{"name": name, "parentCollection": parent_key or False}]

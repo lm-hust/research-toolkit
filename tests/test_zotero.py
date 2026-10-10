@@ -54,6 +54,46 @@ class TestZoteroClient(unittest.TestCase):
         self.assertEqual(col.web_url, "https://www.zotero.org/users/12345/collections/COL_123")
 
     @patch("urllib.request.urlopen")
+    def test_get_collection(self, mock_urlopen):
+        """get_collection matches by key or case-insensitive name, or returns None."""
+        client = ZoteroClient(api_key="mock_key", user_id="12345")
+
+        mock_resp = MagicMock()
+        mock_collections = [
+            {
+                "key": "COL_123",
+                "version": 1,
+                "data": {"name": "Graph Neural Networks", "parentCollection": False},
+            }
+        ]
+        mock_resp.read.return_value = json.dumps(mock_collections).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        # Match by exact name
+        col1 = client.get_collection("Graph Neural Networks")
+        self.assertIsNotNone(col1)
+        assert col1 is not None
+        self.assertEqual(col1.key, "COL_123")
+        self.assertEqual(col1.name, "Graph Neural Networks")
+
+        # Match by case-insensitive name
+        col2 = client.get_collection("graph neural networks")
+        self.assertIsNotNone(col2)
+        assert col2 is not None
+        self.assertEqual(col2.key, "COL_123")
+
+        # Match by key
+        col3 = client.get_collection("COL_123")
+        self.assertIsNotNone(col3)
+        assert col3 is not None
+        self.assertEqual(col3.name, "Graph Neural Networks")
+
+        # Not found
+        col4 = client.get_collection("Nonexistent Collection")
+        self.assertIsNone(col4)
+
+    @patch("urllib.request.urlopen")
     def test_find_existing_item_by_doi(self, mock_urlopen):
         """Finds existing item in library matching normalized DOI."""
         client = ZoteroClient(api_key="mock_key", user_id="12345")

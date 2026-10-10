@@ -105,6 +105,72 @@ class TestDiscoveryService(unittest.TestCase):
         self.assertNotIn('"', relaxed_call_arg)
         self.assertNotIn("AND", relaxed_call_arg)
 
+    def test_search_returns_candidate_batch_and_observations(self):
+        """search returns a PaperCandidateBatch with primary identities and source observations."""
+        mock_s2 = MagicMock()
+        mock_s2.search.return_value = [
+            PaperCandidate(
+                title="S2 Paper",
+                doi="10.1000/s2_paper",
+                citation_count=40,
+                source_platform="semantic_scholar",
+            )
+        ]
+        mock_oa = MagicMock()
+        mock_oa.search.return_value = [
+            PaperCandidate(
+                title="OA Paper No DOI",
+                authors=["Johnson, Mark"],
+                year=2023,
+                citation_count=10,
+                source_platform="openalex",
+            )
+        ]
+        service = DiscoveryService(s2_client=mock_s2, oa_client=mock_oa)
+        batch = service.search("AI Systems", limit=10)
+
+        self.assertEqual(batch.status, "completed")
+        self.assertEqual(len(batch.papers), 2)
+        self.assertEqual(batch.papers[0].paper_id, "doi:10.1000/s2_paper")
+        self.assertTrue(batch.papers[1].paper_id.startswith("hash:"))
+        self.assertEqual(batch.source_observations["semantic_scholar"]["count"], 1)
+        self.assertEqual(batch.source_observations["openalex"]["count"], 1)
+
+    def test_search_partial_failure_when_one_source_fails(self):
+        """search records partial_failure status when an external source raises an error."""
+        mock_s2 = MagicMock()
+        mock_s2.search.side_effect = RuntimeError("S2 rate limit 429")
+        mock_oa = MagicMock()
+        mock_oa.search.return_value = [
+            PaperCandidate(
+                title="OA Paper",
+                doi="10.1000/oa_paper",
+                source_platform="openalex",
+            )
+        ]
+        service = DiscoveryService(s2_client=mock_s2, oa_client=mock_oa)
+        batch = service.search("AI Systems", limit=10)
+
+        self.assertEqual(batch.status, "partial_failure")
+        self.assertEqual(len(batch.papers), 1)
+        self.assertEqual(batch.source_observations["semantic_scholar"]["status"], "error")
+        self.assertEqual(batch.source_observations["openalex"]["status"], "success")
+
+    def test_search_budget_truncated_status(self):
+        """search marks batch as budget_truncated when candidate count exceeds limit."""
+        mock_s2 = MagicMock()
+        mock_s2.search.return_value = [
+            PaperCandidate(title=f"Paper {i}", doi=f"10.1000/p{i}") for i in range(5)
+        ]
+        mock_oa = MagicMock()
+        mock_oa.search.return_value = []
+        service = DiscoveryService(s2_client=mock_s2, oa_client=mock_oa)
+        batch = service.search("Query", limit=3)
+
+        self.assertEqual(batch.status, "budget_truncated")
+        self.assertEqual(len(batch.papers), 3)
+
 
 if __name__ == "__main__":
     unittest.main()
+

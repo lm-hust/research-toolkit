@@ -5,6 +5,7 @@ Domain models for Zotero Personal Library items, collections, and checkpoint ver
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -76,6 +77,30 @@ class SyncResult:
     @property
     def total_count(self) -> int:
         return self.created_count + self.reused_count
+
+    @property
+    def synced_item_keys(self) -> List[str]:
+        keys: List[str] = []
+        for item in self.created_items + self.reused_items:
+            if isinstance(item, dict) and item.get("key"):
+                keys.append(str(item["key"]))
+            elif isinstance(item, str):
+                keys.append(item)
+        return keys
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "collection_key": self.collection_key,
+            "collection_name": self.collection_name,
+            "collection_url": self.collection_url,
+            "total_count": self.total_count,
+            "created_count": self.created_count,
+            "reused_count": self.reused_count,
+            "synced_item_keys": self.synced_item_keys,
+        }
+
+    def to_json(self, indent: Optional[int] = None) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
 
     def __len__(self) -> int:
         return self.total_count
