@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -231,6 +232,38 @@ class ZoteroClient:
         if not key:
             raise ZoteroWriteError(f"Zotero returned no key for the note under {parent_key}")
         return str(key)
+
+    def find_child_notes(self, parent_key: str, tag: str) -> List[Dict[str, Any]]:
+        """
+        Returns the `data` of each child note of `parent_key` that carries exactly `tag`
+        (with its `key` and `version`, which `update_note` needs).
+        """
+        rows = self._request(
+            "GET", f"/items/{parent_key}/children", params={"itemType": "note", "tag": tag}
+        )
+        notes: List[Dict[str, Any]] = []
+        for row in rows if isinstance(rows, list) else []:
+            data = row.get("data", {})
+            if any(t.get("tag") == tag for t in data.get("tags", [])):
+                notes.append(data)
+        return notes
+
+    def update_note(self, note_key: str, note_html: str, version: int) -> None:
+        """
+        Replaces a note's body, leaving its tags and parent alone. `version` guards the write:
+        if the note changed since it was read, Zotero refuses (412) and this raises.
+        """
+        try:
+            self._request(
+                "PATCH",
+                f"/items/{note_key}",
+                payload={"note": note_html},
+                extra_headers={"If-Unmodified-Since-Version": str(version)},
+            )
+        except urllib.error.HTTPError as e:
+            raise ZoteroWriteError(
+                f"Zotero refused to update note {note_key} (HTTP {e.code}): {e.reason}"
+            ) from e
 
     def replace_tags_with_prefix(self, item_key: str, prefix: str, new_tags: List[str]) -> None:
         """

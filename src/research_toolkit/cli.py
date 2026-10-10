@@ -524,21 +524,43 @@ def sync_notebook(
     click.echo(json.dumps(report, ensure_ascii=False, indent=2))
 
 
+def stdin_is_interactive() -> bool:
+    """Whether a person can answer a prompt (agents run without a terminal)."""
+    return sys.stdin.isatty()
+
+
 @cli.command("skim-notebook")
 @click.option("--notebook", required=True, help="Gemini Notebook UUID or exact title.")
 @click.option(
-    "--key", "keys", multiple=True, required=True, help="Zotero item key of a `[key]` source (repeatable)."
+    "--key",
+    "keys",
+    multiple=True,
+    help="Zotero item key of a `[key]` source (repeatable). Default: every `[key]` source.",
 )
 @click.option(
     "--focus",
     default=None,
     help="Research question: rate each paper's relevance and tag it gemini-skim/relevance:<level>.",
 )
-def skim_notebook(notebook: str, keys: tuple[str, ...], focus: Optional[str]) -> None:
+@click.option("--refresh", is_flag=True, help="Re-read papers that already have a skim note (same note).")
+@click.option("--yes", is_flag=True, help="Skip the confirmation when the quota looks too small.")
+def skim_notebook(
+    notebook: str, keys: tuple[str, ...], focus: Optional[str], refresh: bool, yes: bool
+) -> None:
     """Skim `[key]` sources one by one in fresh conversations; write each as a Zotero child note.
 
-    The notebook's existing conversation is saved as a notebook note before it is replaced.
+    Papers that already have a skim note are skipped unless --refresh. The notebook's existing
+    conversation is saved as a notebook note before it is replaced.
     """
+
+    def confirm() -> bool:
+        if yes:
+            return True
+        if not stdin_is_interactive():
+            click.echo("Not an interactive terminal; rerun with --yes to skim anyway.", err=True)
+            return False
+        return click.confirm("Continue?", default=False, err=True)
+
     try:
         report = notebook_skim.skim_notebook(
             ZoteroManager().client,
@@ -546,6 +568,8 @@ def skim_notebook(notebook: str, keys: tuple[str, ...], focus: Optional[str]) ->
             list(keys),
             progress=lambda m: click.echo(m, err=True),
             focus=focus,
+            refresh=refresh,
+            confirm=confirm,
         )
     except notebook_skim.SkimError as e:
         click.echo(f"Error: {e}", err=True)

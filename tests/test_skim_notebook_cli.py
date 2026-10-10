@@ -56,6 +56,12 @@ class SkimNotebookCliTest(unittest.TestCase):
         ):
             return CliRunner().invoke(cli, ["skim-notebook", *args])
 
+    def run_skim_with_input(self, answer: str, *args: str) -> Result:
+        with patch(OPEN_CLIENT, self.fake.open), patch(
+            "research_toolkit.cli.ZoteroManager", self.zotero.manager
+        ):
+            return CliRunner().invoke(cli, ["skim-notebook", *args], input=answer)
+
     def report(self, result: Result) -> dict[str, Any]:
         self.assertEqual(result.exit_code, 0, result.output)
         return json.loads(result.stdout)
@@ -181,6 +187,141 @@ class SkimNotebookCliTest(unittest.TestCase):
         self.assertFalse(report["saved_history_note"])
         self.assertNotIn("delete_conversation", [w[0] for w in self.fake.writes])
         self.assertEqual(self.fake.state[self.nb_id].notes, [])
+
+    # --- batch runs and idempotency (#65) --------------------------------------
+    def test_without_keys_every_keyed_source_is_skimmed(self) -> None:
+        report = self.report(self.run_skim("--notebook", NOTEBOOK))
+
+        self.assertEqual([e["key"] for e in report["written"]], ["K1", "K2"])
+        self.assertEqual([n["parentItem"] for n in self.zotero.created_notes], ["K1", "K2"])
+        asks = [w[2] for w in self.fake.writes if w[0] == "ask"]
+        self.assertEqual(asks, [(self.k1_source,), (self.k2_source,)])
+        self.assertEqual(report["updated"], [])
+        self.assertEqual(report["skipped"], [])
+
+    def test_a_paper_with_a_skim_note_is_skipped_without_asking(self) -> None:
+        self.zotero.add_note("K1", "<h1>Gemini 初读：old</h1>", ["gemini-skim/ai-note"])
+        self.zotero.add_note("K2", "<h1>My own reading</h1>", ["zotero-deep-read/ai-note"])
+        self.fake.start_conversation(self.nb_id, [("keep", "me")])
+
+        report = self.report(self.run_skim("--notebook", NOTEBOOK))
+
+        self.assertEqual(
+            report["skipped"],
+            [{"key": "K1", "title": "Energy and Policy Considerations", "source_id": self.k1_source, "note_key": "N0000000"}],
+        )
+        self.assertEqual([e["key"] for e in report["written"]], ["K2"])
+        self.assertEqual([w[2] for w in self.fake.writes if w[0] == "ask"], [(self.k2_source,)])
+        self.assertEqual(self.zotero.created_notes[0]["note"], "<h1>Gemini 初读：old</h1>")
+
+    def test_when_everything_is_skimmed_the_conversation_is_left_alone(self) -> None:
+        self.zotero.add_note("K1", "<p>old</p>", ["gemini-skim/ai-note"])
+        self.zotero.add_note("K2", "<p>old</p>", ["gemini-skim/ai-note"])
+        original = self.fake.start_conversation(self.nb_id, [("keep", "me")])
+
+        report = self.report(self.run_skim("--notebook", NOTEBOOK))
+
+        self.assertEqual([e["key"] for e in report["skipped"]], ["K1", "K2"])
+        self.assertFalse(report["saved_history_note"])
+        self.assertEqual(self.fake.writes, [])
+        self.assertEqual(self.fake.conversation_id(self.nb_id), original)
+
+    def test_refresh_rewrites_the_same_note_instead_of_adding_one(self) -> None:
+        note_key = self.zotero.add_note("K1", "<h1>Gemini 初读：old</h1>", ["gemini-skim/ai-note"])
+        self.fake.answers[self.k1_source] = (ANSWER, [])
+
+        report = self.report(self.run_skim("--notebook", NOTEBOOK, "--key", "K1", "--refresh"))
+
+        [note] = self.zotero.created_notes
+        self.assertEqual(note["key"], note_key)
+        self.assertIn("1438 lbs CO2", note["note"])
+        self.assertEqual(note["tags"], ["gemini-skim/ai-note"])
+        self.assertEqual(self.zotero.updated_notes, [{"key": note_key, "note": note["note"], "version": 1}])
+        self.assertEqual(
+            report["updated"],
+            [{"key": "K1", "title": "Energy and Policy Considerations", "source_id": self.k1_source, "note_key": note_key}],
+        )
+        self.assertEqual(report["written"], [])
+
+    def test_a_refused_update_is_a_failure_and_the_run_goes_on(self) -> None:
+        note_key = self.zotero.add_note("K1", "<p>old</p>", ["gemini-skim/ai-note"])
+        self.zotero.update_errors[note_key] = RuntimeError("HTTP 412")
+
+        report = self.report(self.run_skim("--notebook", NOTEBOOK, "--refresh"))
+
+        self.assertEqual([(f["key"], f["error"]) for f in report["failed"]], [("K1", "HTTP 412")])
+        self.assertEqual([e["key"] for e in report["written"]], ["K2"])
+
+    # --- quota ----------------------------------------------------------------
+    def test_report_carries_quota_before_and_after(self) -> None:
+        self.fake.quota_remaining_percent = 50.0
+        self.fake.weekly_remaining_percent = 80.0
+
+        report = self.report(self.run_skim("--notebook", NOTEBOOK))
+
+        before, after = report["quota_before"], report["quota_after"]
+        self.assertEqual(before["window"], "five_hour")
+        self.assertAlmostEqual(before["remaining_percent"], 50.0)
+        self.assertAlmostEqual(before["needed_percent"], 0.82)
+        self.assertAlmostEqual(after["remaining_percent"], 49.18)
+
+    def test_short_quota_without_a_terminal_aborts_before_any_write(self) -> None:
+        self.fake.quota_remaining_percent = 0.5  # two asks need 0.82 %
+        self.fake.start_conversation(self.nb_id, [("keep", "me")])
+
+        result = self.run_skim("--notebook", NOTEBOOK)
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("0.82", result.stderr)
+        self.assertIn("--yes", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(self.fake.writes, [])
+        self.assertEqual(self.zotero.created_notes, [])
+
+    def test_short_quota_asks_for_confirmation_on_a_terminal(self) -> None:
+        self.fake.quota_remaining_percent = 0.5
+        with patch("research_toolkit.cli.stdin_is_interactive", return_value=True):
+            declined = self.run_skim_with_input("n\n", "--notebook", NOTEBOOK)
+            self.assertEqual(declined.exit_code, 1)
+            self.assertEqual(self.fake.writes, [])
+
+            accepted = self.run_skim_with_input("y\n", "--notebook", NOTEBOOK)
+        self.assertEqual(accepted.exit_code, 0, accepted.output)
+        self.assertIn("0.82", accepted.stderr)
+        self.assertEqual([e["key"] for e in json.loads(accepted.stdout)["written"]], ["K1", "K2"])
+
+    def test_yes_skips_the_quota_confirmation(self) -> None:
+        self.fake.quota_remaining_percent = 0.5
+
+        report = self.report(self.run_skim("--notebook", NOTEBOOK, "--yes"))
+
+        self.assertEqual([e["key"] for e in report["written"]], ["K1", "K2"])
+
+    def test_the_weekly_window_counts_when_it_is_the_tighter_one(self) -> None:
+        self.fake.weekly_remaining_percent = 0.5
+
+        result = self.run_skim("--notebook", NOTEBOOK)
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("weekly", result.stderr)
+
+    def test_quota_only_counts_papers_that_will_be_asked(self) -> None:
+        self.zotero.add_note("K1", "<p>old</p>", ["gemini-skim/ai-note"])
+        self.fake.quota_remaining_percent = 0.5  # enough for one ask
+
+        report = self.report(self.run_skim("--notebook", NOTEBOOK))
+
+        self.assertAlmostEqual(report["quota_before"]["needed_percent"], 0.41)
+        self.assertEqual([e["key"] for e in report["written"]], ["K2"])
+
+    def test_unknown_quota_does_not_block(self) -> None:
+        self.fake.usage_errors = RuntimeError("usage RPC failed")
+
+        report = self.report(self.run_skim("--notebook", NOTEBOOK))
+
+        self.assertIsNone(report["quota_before"])
+        self.assertIsNone(report["quota_after"])
+        self.assertEqual(len(report["written"]), 2)
 
     # --- failures ------------------------------------------------------------
     def test_failures_are_reported_and_do_not_stop_the_run(self) -> None:

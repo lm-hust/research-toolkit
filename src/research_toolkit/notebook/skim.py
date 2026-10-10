@@ -10,6 +10,10 @@ note HTML. Gemini's page numbers are unreliable, so provenance is `cited_text` o
 With a focus question the prompt adds a `RELEVANCE_HEADING` section; `parse_relevance()` reads the
 level from it and the Zotero item gets one `gemini-skim/relevance:<level>` tag. A level that cannot
 be read is reported as "unparsed" and no tag is touched.
+
+Runs are idempotent by the `SKIM_NOTE_TAG` child note: papers that have one are skipped, or with
+`refresh` re-read into that same note (updated by version). Before asking, the usage meter's
+tightest window is compared with one QNA ask per remaining paper; a shortfall needs `confirm()`.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 import notebooklm
-from notebooklm import AskResult, ChatReference
+from notebooklm import AskResult, ChatReference, UsageActionKind, UsageWindow, UsageWindowKind
 
 from research_toolkit.notebook import client as notebook_client
 from research_toolkit.notebook.client import NotebookClient
@@ -32,6 +36,7 @@ from research_toolkit.notebook.titles import source_key, source_paper_title
 from research_toolkit.zotero.client import ZoteroClient
 
 Progress = Callable[[str], None]
+Confirm = Callable[[], bool]
 
 SKIM_NOTE_TAG = "gemini-skim/ai-note"
 NOTE_TITLE_PREFIX = "Gemini 初读："
@@ -221,12 +226,52 @@ def skim_notebook(
     keys: list[str],
     progress: Progress = lambda _msg: None,
     focus: Optional[str] = None,
+    refresh: bool = False,
+    confirm: Confirm = lambda: True,
 ) -> dict[str, Any]:
-    """Skims the `[key]` sources named by `keys` and returns the JSON-ready report.
+    """Skims the `[key]` sources named by `keys` (all `[key]` sources when empty) and returns the
+    JSON-ready report.
 
+    A paper that already has a skim note is skipped, or with `refresh` re-read into that same note.
+    When the quota looks too small for the papers left to read, `confirm()` decides whether to go
+    on; False raises SkimError before anything is written.
     With `focus`, each paper is also rated for relevance to that question and tagged in Zotero.
     """
-    return asyncio.run(_skim(zotero, notebook_ref, keys, progress, focus))
+    return asyncio.run(_skim(zotero, notebook_ref, keys, progress, focus, refresh, confirm))
+
+
+@dataclass(frozen=True)
+class _Pending:
+    target: SkimTarget
+    existing_note: Optional[dict[str, Any]]  # the skim note to rewrite (refresh), or None
+
+
+def _window_name(window: UsageWindow) -> str:
+    return "weekly" if window.kind is UsageWindowKind.WEEKLY else "five_hour"
+
+
+async def _quota(client: NotebookClient, papers: int = 0) -> Optional[dict[str, Any]]:
+    """
+    The tightest usage window, plus (for `papers` > 0) the estimated cost of one ask per paper.
+    None when the meter is unavailable: an unknown quota never blocks a run.
+    """
+    try:
+        usage = await client.settings.get_usage()
+    except Exception:
+        return None
+    if not usage.available or not usage.windows:
+        return None
+    window = min(usage.windows, key=lambda w: w.remaining_percent)
+    quota: dict[str, Any] = {
+        "window": _window_name(window),
+        "remaining_percent": round(window.remaining_percent, 3),
+        "resets_at": window.resets_at.isoformat(),
+    }
+    if papers:
+        qna = usage.action(UsageActionKind.QNA)
+        cost = qna.estimated_cost_percent if qna is not None else None
+        quota["needed_percent"] = round(papers * cost, 3) if cost is not None else None
+    return quota
 
 
 async def _skim(
@@ -234,7 +279,9 @@ async def _skim(
     notebook_ref: str,
     keys: list[str],
     progress: Progress,
-    focus: Optional[str] = None,
+    focus: Optional[str],
+    refresh: bool,
+    confirm: Confirm,
 ) -> dict[str, Any]:
     async with notebook_client.open_client() as client:
         try:
@@ -248,8 +295,12 @@ async def _skim(
             "notebook_title": notebook.title,
             "saved_history_note": False,
             "written": [],
+            "updated": [],
+            "skipped": [],
             "failed": [],
             "relevance": {**{level: 0 for level in RELEVANCE_LEVELS}, UNPARSED: 0},
+            "quota_before": None,
+            "quota_after": None,
         }
         by_key: dict[str, SkimTarget] = {}
         for src in await client.sources.list(notebook.id):
@@ -257,14 +308,11 @@ async def _skim(
             if key and key not in by_key:
                 by_key[key] = SkimTarget(key, source_paper_title(src.title), src.id)
 
+        pending = _plan(zotero, by_key, keys or list(by_key), refresh, report)
+        report["quota_before"] = await _check_quota(client, len(pending), progress, confirm)
+
         own_conversations: set[str] = set()
-        for key in keys:
-            target = by_key.get(key)
-            if target is None:
-                report["failed"].append(
-                    {"key": key, "title": "", "error": f"No source titled '[{key}] ...' in the notebook."}
-                )
-                continue
+        for item in pending:
             try:
                 saved = await clear_conversation(client, notebook.id, own_conversations)
             except Exception as e:
@@ -275,21 +323,72 @@ async def _skim(
                 report["saved_history_note"] = True
                 progress(f"Saved the existing conversation as notebook note '{saved.title}'")
             await _skim_one(
-                client, zotero, notebook.id, target, own_conversations, report, progress, focus
+                client, zotero, notebook.id, item, own_conversations, report, progress, focus
             )
+        report["quota_after"] = await _quota(client)
         return report
+
+
+def _plan(
+    zotero: ZoteroClient,
+    by_key: dict[str, SkimTarget],
+    keys: list[str],
+    refresh: bool,
+    report: dict[str, Any],
+) -> list[_Pending]:
+    """Papers to ask about; unknown keys go to `failed`, already-skimmed ones to `skipped`."""
+    pending: list[_Pending] = []
+    for key in keys:
+        target = by_key.get(key)
+        if target is None:
+            report["failed"].append(
+                {"key": key, "title": "", "error": f"No source titled '[{key}] ...' in the notebook."}
+            )
+            continue
+        entry = {"key": target.key, "title": target.title, "source_id": target.source_id}
+        try:
+            notes = zotero.find_child_notes(target.key, SKIM_NOTE_TAG)
+        except Exception as e:  # one paper failing must not stop the run
+            report["failed"].append({**entry, "error": f"Could not look up its skim note: {e}"})
+            continue
+        existing = notes[0] if notes else None
+        if existing is not None and not refresh:
+            report["skipped"].append({**entry, "note_key": existing["key"]})
+            continue
+        pending.append(_Pending(target, existing))
+    return pending
+
+
+async def _check_quota(
+    client: NotebookClient, papers: int, progress: Progress, confirm: Confirm
+) -> Optional[dict[str, Any]]:
+    quota = await _quota(client, papers)
+    if quota is None:
+        progress("Quota unknown (usage meter unavailable); continuing.")
+        return None
+    needed = quota.get("needed_percent")
+    if needed is not None and needed > quota["remaining_percent"]:
+        progress(
+            f"Skimming {papers} papers needs about {needed:.2f}% of the {quota['window']} quota, "
+            f"but only {quota['remaining_percent']:.2f}% remains (resets {quota['resets_at']}). "
+            "The run may stop partway; re-running later resumes it."
+        )
+        if not confirm():
+            raise SkimError("Stopped before skimming: not enough quota and the run was not confirmed.")
+    return quota
 
 
 async def _skim_one(
     client: NotebookClient,
     zotero: ZoteroClient,
     notebook_id: str,
-    target: SkimTarget,
+    item: _Pending,
     own_conversations: set[str],
     report: dict[str, Any],
     progress: Progress,
     focus: Optional[str] = None,
 ) -> None:
+    target, existing = item.target, item.existing_note
     entry: dict[str, Any] = {"key": target.key, "title": target.title, "source_id": target.source_id}
     progress(f"Skimming [{target.key}] {target.title[:60]} (about 1 min)")
     try:
@@ -298,7 +397,11 @@ async def _skim_one(
         )
         own_conversations.add(result.conversation_id)
         note = render_note(target, notebook_id, result, datetime.date.today(), focus)
-        note_key = zotero.create_child_note(target.key, note, [SKIM_NOTE_TAG])
+        if existing is None:
+            note_key = zotero.create_child_note(target.key, note, [SKIM_NOTE_TAG])
+        else:
+            note_key = existing["key"]
+            zotero.update_note(note_key, note, existing["version"])
     except Exception as e:  # one paper failing must not stop the run
         progress(f"  failed: {e}")
         report["failed"].append({**entry, "error": str(e)})
@@ -319,4 +422,4 @@ async def _skim_one(
                 return
         entry["relevance"] = level or UNPARSED
         report["relevance"][entry["relevance"]] += 1
-    report["written"].append(entry)
+    report["updated" if existing is not None else "written"].append(entry)
