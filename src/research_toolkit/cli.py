@@ -524,46 +524,6 @@ def sync_notebook(collection: Optional[str], allow_partial: bool) -> None:
 
 
 @cli.command()
-@click.argument("query")
-@click.option(
-    "--notebook-id",
-    "-nb",
-    default=None,
-    help="Target NotebookLM notebook ID. Defaults to active notebook in session.",
-)
-def ask(query: str, notebook_id: Optional[str]) -> None:
-    """Execute source-grounded Q&A against synthesized notebook sources."""
-    session = load_session()
-    nb_id = notebook_id or session.get("notebook_id")
-    if not nb_id:
-        click.echo(
-            "⚠️ No active notebook ID found. Run `sync-notebook` first or pass --notebook-id.",
-            err=True,
-        )
-        sys.exit(1)
-
-    click.echo(f"💬 Querying notebook '{nb_id}'...")
-    gw = get_default_gateway()
-    grounded = gw.query_sources(nb_id, query)
-
-    click.echo("\n" + "=" * 60)
-    click.echo("🧠 GROUNDED SYNTHESIS ANSWER")
-    click.echo("=" * 60)
-    click.echo(grounded.answer)
-
-    if grounded.citations:
-        click.echo("\n" + "-" * 60)
-        click.echo("📌 Distilled Evidence (Verbatim Grounded Quotes):")
-        click.echo("-" * 60)
-        for idx, cit in enumerate(grounded.citations, 1):
-            src_str = cit.source_title or cit.source_id
-            offset_str = f" [offset {cit.start_offset}:{cit.end_offset}]" if cit.end_offset else ""
-            click.echo(f"{idx}. \"{cit.quote}\"")
-            click.echo(f"   Source: {src_str}{offset_str}")
-    click.echo("=" * 60)
-
-
-@cli.command()
 def doctor() -> None:
     """Validate system configuration, credentials, and local storage connectivity."""
     click.echo("\n🩺 Running Research Toolkit Diagnostic Health Check...")
@@ -603,19 +563,16 @@ def doctor() -> None:
     oa_key = os.getenv("OPENALEX_API_KEY")
     checks.append(("OpenAlex", "PASS" if oa_key else "INFO", "API key configured" if oa_key else "Public polite pool active."))
 
-    # 4. NotebookLM / Gemini Gateway
+    # 4. NotebookLM Gateway
     nlm_auth = os.getenv("NOTEBOOKLM_AUTH_JSON")
-    gemini_key = os.getenv("GEMINI_API_KEY")
     master_token_file = Path.home() / ".notebooklm" / "profiles" / "default" / "master_token.json"
 
     if nlm_auth:
         checks.append(("Synthesis Gateway", "PASS", "NOTEBOOKLM_AUTH_JSON configured."))
     elif master_token_file.exists():
         checks.append(("Synthesis Gateway", "PASS", f"Master token file found: {master_token_file}"))
-    elif gemini_key:
-        checks.append(("Synthesis Gateway", "PASS", "GEMINI_API_KEY configured (Gemini fallback active)."))
     else:
-        checks.append(("Synthesis Gateway", "WARN", "No synthesis credentials found (NOTEBOOKLM_AUTH_JSON, master_token.json, or GEMINI_API_KEY)."))
+        checks.append(("Synthesis Gateway", "WARN", "No synthesis credentials found (NOTEBOOKLM_AUTH_JSON or master_token.json)."))
 
     # Format output
     try:

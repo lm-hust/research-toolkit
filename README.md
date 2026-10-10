@@ -22,10 +22,8 @@
   - 持久化规范化标准 DOI（`https://doi.org/{doi}`）。
   - 直接探测本地磁盘目录（`~/Zotero/storage/<key>/*.pdf`），彻底规避 Zotero 云端 300MB 免费配额限制。
   - 自动消解 Zotero Connector 抓取造成的重复条目，智能合并标签并采用带 PDF 的条目。
-- **弹性 NotebookLM 网关与逐字证据提取（Distilled Evidence）**：
+- **NotebookLM 网关**：
   - 支持持久化安卓主令牌（`master_token.json`）与单行环境变量（`NOTEBOOKLM_AUTH_JSON`），便于跨 VPS 极简迁移。
-  - 内置官方 Google Gemini 1.5 Pro API 自动兜底（`GEMINI_API_KEY`），无惧逆向接口抖动。
-  - 问答输出自带引文精确字符偏移量（`start_offset` / `end_offset`），每条论点均有据可查。
 - **MCP (Model Context Protocol) 原生就绪**：
   - 提供标准 JSON-Schema 清单，可无缝接入 Claude Desktop、Cursor 等支持 MCP 的智能代理。
 
@@ -58,12 +56,9 @@ ZOTERO_LIBRARY_TYPE=user
 ZOTERO_STORAGE_DIR=/home/ling/Zotero/storage
 
 # --- Google NotebookLM 网关 ---
-# 方式 A：Android master token，存放在 ~/.notebooklm/profiles/default/master_token.json
+# Android master token，存放在 ~/.notebooklm/profiles/default/master_token.json
 # （由 scripts/setup_notebooklm.sh 写入）。不要设置 NOTEBOOKLM_AUTH_JSON：它只接受浏览器 cookie 登录状态。
 NOTEBOOKLM_BACKEND=android
-
-# 方式 B：官方 Gemini 兜底密钥（可选，推荐配置备用）
-GEMINI_API_KEY=your_gemini_api_key
 ```
 
 > 💡 **快速配置向导**：
@@ -83,11 +78,11 @@ PYTHONPATH=src python3 -m research_toolkit.cli doctor
 
 ## 📖 核心命令与工作流指南
 
-完整的科研流程分为四个阶段：**文献检索 $\to$ 检查点确认 $\to$ 来源上传 $\to$ 溯源合成**。
+完整的科研流程分为三个阶段：**文献检索 $\to$ 检查点确认 $\to$ 来源上传**。
 
 ```
-[1. search] ──────► [2. checkpoint] ──────► [3. sync-notebook] ──────► [4. ask]
- 文献检索与排序        本地 PDF 查缺补漏         创建 NotebookLM 并同步        基于证据的问答
+[1. search] ──────► [2. checkpoint] ──────► [3. sync-notebook]
+ 文献检索与排序        本地 PDF 查缺补漏         创建 NotebookLM 并同步
 ```
 
 ### 阶段 1：文献检索与智能排序 (`search`)
@@ -136,19 +131,6 @@ PYTHONPATH=src python3 -m research_toolkit.cli sync-notebook --allow-partial
 
 ---
 
-### 阶段 4：基于逐字证据的深度问答 (`ask`)
-
-针对已同步的文献库，向 NotebookLM 提问并提取严谨事实证据：
-
-```bash
-PYTHONPATH=src python3 -m research_toolkit.cli ask "这些文献中关于 GNN 过平滑（Over-smoothing）问题的主要缓解方案有哪些？"
-```
-- **输出格式**：
-  - 核心分析结论。
-  - **📌 Distilled Evidence**：逐字引用的原文句子、来源论文标题及字符偏移量区间（例如 `[offset 120:245]`），杜绝模型幻觉。
-
----
-
 ### 辅助命令：密钥生成、网关启动与 MCP Schema 导出
 
 ```bash
@@ -193,7 +175,7 @@ curl https://your_subdomain.duckdns.org/health
    - 在 API Key 输入框填入你的 `RESEARCH_TOOLKIT_API_KEY`。
 3. **Schema 导入**：
    - 点击 **Import from URL**，输入：`https://<your_subdomain>.duckdns.org/openapi.json`。
-   - 自动解析出 `search`, `checkpoint`, `sync-notebook`, `ask` 四大能力！
+   - 自动解析出 `search`, `checkpoint` 两大能力！
 
 #### 2. claude.ai 网页端 / 移动端（自定义连接器，MCP Streamable HTTP）
 claude.ai 的自定义连接器无法设置自定义请求头，因此把密钥放在 URL 查询参数里：

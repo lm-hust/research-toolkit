@@ -1,6 +1,6 @@
 """
 src/research_toolkit/synthesis/adapters.py
-Adapters implementing NotebookLMGateway for notebooklm-py and Gemini Grounding fallback.
+Adapter implementing NotebookLMGateway for notebooklm-py.
 """
 
 from __future__ import annotations
@@ -8,8 +8,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import urllib.parse
-import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -129,110 +127,6 @@ class NotebookLMPyAdapter:
         )
 
 
-class GeminiGroundingFallbackAdapter:
-    """
-    Resilient fallback adapter using Google's official Gemini API.
-    Provides source-grounded answers with quote citations.
-    """
-
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-1.5-pro"):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model = model
-        self._notebooks: Dict[str, Dict[str, Any]] = {}
-
-    def is_configured(self) -> bool:
-        return bool(self.api_key)
-
-    def check_health(self) -> bool:
-        return self.is_configured()
-
-    def create_notebook(self, title: str) -> NotebookInfo:
-        nb_id = f"gemini_nb_{uuid.uuid4().hex[:8]}"
-        self._notebooks[nb_id] = {"title": title, "sources": []}
-        return NotebookInfo(id=nb_id, title=title, sources_count=0)
-
-    def upload_source(self, notebook_id: str, file_path: Path) -> NotebookSource:
-        src_id = f"src_{uuid.uuid4().hex[:8]}"
-        nb = self._notebooks.setdefault(notebook_id, {"title": "Default", "sources": []})
-        src = NotebookSource(id=src_id, title=file_path.name, path=str(file_path))
-        nb["sources"].append(src)
-        return src
-
-    def query_sources(self, notebook_id: str, prompt: str) -> GroundedAnswer:
-        if not self.is_configured():
-            raise ValueError("GEMINI_API_KEY is not configured for fallback adapter.")
-
-        url = f"{self.BASE_URL}/models/{self.model}:generateContent?key={self.api_key}"
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": (
-                                "You are a research synthesis agent. Answer the following prompt "
-                                f"strictly using grounded sources: {prompt}"
-                            )
-                        }
-                    ]
-                }
-            ]
-        }
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-
-        try:
-            with urllib.request.urlopen(req, timeout=45) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except Exception as e:
-            logger.error("Gemini API call failed: %s", e)
-            raise
-
-        answer_text = ""
-        citations: List[DistilledEvidence] = []
-
-        candidates = data.get("candidates", [])
-        if candidates:
-            first_cand = candidates[0]
-            parts = first_cand.get("content", {}).get("parts", [])
-            if parts:
-                answer_text = parts[0].get("text", "")
-
-            # Parse grounding metadata
-            meta = first_cand.get("groundingMetadata", {})
-            supports = meta.get("groundingSupports", [])
-            for sup in supports:
-                seg = sup.get("segment", {})
-                start = seg.get("startIndex", 0)
-                end = seg.get("endIndex", len(answer_text))
-                quote = seg.get("text") or answer_text[start:end]
-                citations.append(
-                    DistilledEvidence(
-                        quote=quote,
-                        source_id=notebook_id,
-                        source_title="Grounded Source",
-                        start_offset=start,
-                        end_offset=end,
-                    )
-                )
-
-        return GroundedAnswer(answer=answer_text, citations=citations, notebook_id=notebook_id)
-
-
 def get_default_gateway() -> NotebookLMGateway:
-    """Factory creating the primary or fallback gateway according to environment variables."""
-    nlm = NotebookLMPyAdapter()
-    if nlm.is_configured():
-        return nlm
-
-    gemini = GeminiGroundingFallbackAdapter()
-    if gemini.is_configured():
-        return gemini
-
-    # Default to NotebookLMPyAdapter as the primary engine
-    return nlm
+    """Factory creating the NotebookLM gateway."""
+    return NotebookLMPyAdapter()

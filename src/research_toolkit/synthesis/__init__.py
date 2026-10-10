@@ -1,9 +1,8 @@
 """
-Synthesis package for NotebookLM Gateway, Gemini Grounding fallback, and DistilledEvidence.
+Synthesis package for NotebookLM Gateway and DistilledEvidence.
 """
 
 from research_toolkit.synthesis.adapters import (
-    GeminiGroundingFallbackAdapter,
     NotebookLMPyAdapter,
     get_default_gateway,
 )
@@ -18,7 +17,6 @@ from research_toolkit.synthesis.models import (
 __all__ = [
     "NotebookLMGateway",
     "NotebookLMPyAdapter",
-    "GeminiGroundingFallbackAdapter",
     "get_default_gateway",
     "NotebookInfo",
     "NotebookSource",
