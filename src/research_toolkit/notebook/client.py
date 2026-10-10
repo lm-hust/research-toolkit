@@ -38,6 +38,25 @@ class SourcesApi(Protocol):
         title: str | None = None,
     ) -> Source: ...
 
+    async def add_url(
+        self,
+        notebook_id: str,
+        url: str,
+        *,
+        wait: bool = False,
+        wait_timeout: float = 120.0,
+        title: str | None = None,
+    ) -> Source: ...
+
+    async def wait_until_ready(
+        self, notebook_id: str, source_id: str, timeout: float = 120.0
+    ) -> Source: ...
+
+    async def rename(
+        self, notebook_id: str, source_id: str, new_title: str, *, return_object: bool = True
+    ) -> Source | None: ...
+
+    async def delete(self, notebook_id: str, source_id: str) -> None: ...
 
 class ChatApi(Protocol):
     async def ask(

@@ -42,24 +42,70 @@ class FakeZoteroLibrary(ZoteroClient):
         self.rows[key] = []
         return key
 
-    def add_paper(self, collection_key: str, key: str, title: str, pdf: bool = True) -> None:
-        rows = self.rows[collection_key]
-        rows.append({"key": key, "data": {"itemType": "journalArticle", "title": title}})
+    def add_paper(
+        self,
+        collection_key: str,
+        key: str,
+        title: str,
+        pdf: bool = True,
+        doi: Optional[str] = None,
+        url: Optional[str] = None,
+    ) -> None:
+        data: Dict[str, Any] = {"itemType": "journalArticle", "title": title}
+        if doi:
+            data["DOI"] = doi
+        if url:
+            data["url"] = url
+        self.rows[collection_key].append({"key": key, "data": data})
         if pdf:
-            att = f"A{key}"
+            self.add_pdf(collection_key, key, f"{title[:20]}.pdf")
+
+    def add_attachment(
+        self,
+        collection_key: str,
+        parent_key: str,
+        content_type: str,
+        filename: Optional[str],
+        content: bytes = b"",
+        link_mode: str = "imported_file",
+    ) -> str:
+        """Adds a child attachment row; with a filename, its file lands in storage/<att key>/."""
+        rows = self.rows[collection_key]
+        att = f"A{parent_key}{sum(1 for r in rows if r['data'].get('parentItem') == parent_key)}"
+        data: Dict[str, Any] = {
+            "itemType": "attachment",
+            "parentItem": parent_key,
+            "contentType": content_type,
+            "linkMode": link_mode,
+        }
+        if filename:
+            data["filename"] = filename
             (self.storage_dir / att).mkdir(parents=True, exist_ok=True)
-            (self.storage_dir / att / f"{title[:20]}.pdf").write_bytes(b"%PDF-1.4 fake")
-            rows.append(
-                {
-                    "key": att,
-                    "data": {
-                        "itemType": "attachment",
-                        "parentItem": key,
-                        "contentType": "application/pdf",
-                        "linkMode": "imported_file",
-                    },
-                }
-            )
+            (self.storage_dir / att / filename).write_bytes(content)
+        rows.append({"key": att, "data": data})
+        return att
+
+    def add_pdf(self, collection_key: str, parent_key: str, filename: str = "paper.pdf") -> str:
+        return self.add_attachment(
+            collection_key, parent_key, "application/pdf", filename, b"%PDF-1.4 fake"
+        )
+
+    def add_epub(self, collection_key: str, parent_key: str, filename: str = "book.epub") -> str:
+        return self.add_attachment(
+            collection_key, parent_key, "application/epub+zip", filename, b"PK fake epub"
+        )
+
+    def add_html_snapshot(
+        self, collection_key: str, parent_key: str, html: str, filename: str = "snapshot.html"
+    ) -> str:
+        """A Zotero web snapshot (`imported_url`, text/html) stored on disk."""
+        return self.add_attachment(
+            collection_key, parent_key, "text/html", filename, html.encode(), "imported_url"
+        )
+
+    def add_link(self, collection_key: str, parent_key: str) -> str:
+        """A linked URL attachment: no file anywhere."""
+        return self.add_attachment(collection_key, parent_key, "text/html", None, link_mode="linked_url")
 
     def add_child_note(self, collection_key: str, parent_key: str, note_key: str) -> None:
         self.rows[collection_key].append(

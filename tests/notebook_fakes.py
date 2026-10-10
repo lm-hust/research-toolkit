@@ -16,6 +16,15 @@ Extending it for a new server behaviour: add a knob (a public attribute, set by 
 before running) and consult it inside the API method the behaviour belongs to. Existing knobs:
 - `upload_errors`: {substring of the requested title: exception to raise from add_file}.
   The upload does not land (no residue).
+- `title_resets`: {substring of the requested title: "immediate" | "late"}. The server
+  reverts the source title to the uploaded filename, either right away (wait_until_ready
+  already shows the filename) or after wait_until_ready returned the requested title (only a
+  later list shows it). A rename sticks.
+- `unconfirmed_uploads`: {substring of the requested title: how many add_file attempts fail}.
+  Each failing attempt raises a NotebookLMError whose `.unconfirmed` is True and leaves a
+  PREPARING residue titled with the filename, as UNCONFIRMED_WRITE does.
+- `processing_timeouts`: substrings of titles whose source never becomes ready:
+  wait_until_ready raises SourceTimeoutError with the requested timeout.
 - `answers`: {source id: (answer text, [ChatReference])} returned by chat.ask when the ask is
   restricted to that one source; anything else gets a generic answer with no references.
 - `ask_errors`: {source id: exception to raise from chat.ask restricted to that source}.
@@ -24,7 +33,7 @@ before running) and consult it inside the API method the behaviour belongs to. E
 Chat mirrors the server: each notebook has one current conversation; ask() without a
 conversation id extends it (or starts one when there is none); delete_conversation drops it and
 its history. Arrange one with `start_conversation(nb_id, [(q, a), ...])`; read
-`conversation_id(nb_id)`, `history(nb_id)`, `note_titles(nb_id)`, `notes[nb_id]`.
+`conversation_id(nb_id)`, `history(nb_id)`, `note_titles(nb_id)`, `state[nb_id].notes`.
 """
 
 from __future__ import annotations
@@ -37,11 +46,31 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from notebooklm import AskResult, ChatReference, Note, Notebook, Source, SourceStatus
+from notebooklm import (
+    AskResult,
+    ChatReference,
+    NetworkError,
+    Note,
+    Notebook,
+    Source,
+    SourceStatus,
+    SourceTimeoutError,
+    ValidationError,
+)
+from notebooklm.outcomes import CommitState, OperationMetadata
 
 from research_toolkit.notebook.client import NotebookClient
 
 OPEN_CLIENT = "research_toolkit.notebook.client.open_client"
+HTML_SUFFIXES = (".html", ".htm", ".xhtml", ".xht")
+
+
+class _UnconfirmedUpload(NetworkError):
+    """What notebooklm-py raises for UNCONFIRMED_WRITE: a typed error with `.unconfirmed`."""
+
+    @property
+    def operation_metadata(self) -> OperationMetadata | None:
+        return OperationMetadata(commit_state=CommitState.UNKNOWN)
 
 
 @dataclass
@@ -85,13 +114,70 @@ class FakeSourcesAPI:
         title: str | None = None,
     ) -> Source:
         path = Path(file_path)
+        wanted = title or path.name
         self._fake.writes.append(("add_file", notebook_id, title, path.name))
         for needle, error in self._fake.upload_errors.items():
-            if needle in (title or path.name):
+            if needle in wanted:
                 raise error
-        src = self._fake.new_source(notebook_id, title or path.name)
+        if path.suffix.lower() in HTML_SUFFIXES:  # real client: notebooklm.ValidationError
+            raise ValidationError("HTML file uploads are not supported")
+        for needle, remaining in self._fake.unconfirmed_uploads.items():
+            if needle in wanted and remaining > 0:
+                self._fake.unconfirmed_uploads[needle] = remaining - 1
+                self._fake.new_source(notebook_id, path.name, status=SourceStatus.PREPARING)
+                raise _UnconfirmedUpload("Android file upload failed during start")
+        reset = next((v for n, v in self._fake.title_resets.items() if n in wanted), None)
+        processing = any(n in wanted for n in self._fake.processing_timeouts)
+        src = self._fake.new_source(
+            notebook_id,
+            path.name if reset == "immediate" else wanted,
+            status=SourceStatus.PROCESSING if processing else SourceStatus.READY,
+        )
+        if reset == "late":
+            self._fake.late_resets[src.id] = path.name
         self._fake.uploaded_paths.append(path)
-        return src
+        self._fake.uploaded_contents.append(path.read_bytes())
+        return Source(id=src.id, title=wanted, status=src.status)
+
+    async def wait_until_ready(
+        self, notebook_id: str, source_id: str, timeout: float = 120.0
+    ) -> Source:
+        src = self._fake.source(notebook_id, source_id)
+        if src.status != SourceStatus.READY:
+            raise SourceTimeoutError(source_id, timeout, last_status=src.status)
+        ready = Source(id=src.id, title=src.title, status=src.status)
+        late = self._fake.late_resets.pop(source_id, None)
+        if late is not None:
+            src.title = late
+        return ready
+
+    async def rename(
+        self, notebook_id: str, source_id: str, new_title: str, *, return_object: bool = True
+    ) -> Source | None:
+        self._fake.writes.append(("rename_source", notebook_id, source_id, new_title))
+        src = self._fake.source(notebook_id, source_id)
+        src.title = new_title
+        return src if return_object else None
+
+    async def delete(self, notebook_id: str, source_id: str) -> None:
+        self._fake.writes.append(("delete_source", notebook_id, source_id))
+        sources = self._fake.state[notebook_id].sources
+        sources[:] = [s for s in sources if s.id != source_id]
+
+    async def add_url(
+        self,
+        notebook_id: str,
+        url: str,
+        *,
+        wait: bool = False,
+        wait_timeout: float = 120.0,
+        title: str | None = None,
+    ) -> Source:
+        self._fake.writes.append(("add_url", notebook_id, title, url))
+        for needle, error in self._fake.upload_errors.items():
+            if needle in (title or url):
+                raise error
+        return self._fake.new_source(notebook_id, title or url)
 
 
 class FakeChatAPI:
@@ -160,10 +246,15 @@ class FakeNotebookClient:
         self.state: dict[str, FakeNotebookState] = {}
         self.writes: list[tuple[Any, ...]] = []
         self.uploaded_paths: list[Path] = []
+        self.uploaded_contents: list[bytes] = []  # file bytes at upload time
         self.upload_errors: dict[str, Exception] = {}
         self.answers: dict[str, tuple[str, list[ChatReference]]] = {}
         self.ask_errors: dict[str, Exception] = {}
         self.note_errors: Exception | None = None
+        self.title_resets: dict[str, str] = {}
+        self.unconfirmed_uploads: dict[str, int] = {}
+        self.processing_timeouts: set[str] = set()
+        self.late_resets: dict[str, str] = {}  # source id -> filename, pending a late reset
         self._ids = itertools.count(1)
         self.notebooks = FakeNotebooksAPI(self)
         self.sources = FakeSourcesAPI(self)
@@ -193,6 +284,8 @@ class FakeNotebookClient:
         nb.conversation_id = self.next_id("conv")
         nb.history = list(turns)
         return nb.conversation_id
+    def source(self, notebook_id: str, source_id: str) -> Source:
+        return next(s for s in self.state[notebook_id].sources if s.id == source_id)
 
     # --- assert helpers --------------------------------------------------
     def source_titles(self, notebook_id: str) -> list[str | None]:

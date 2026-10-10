@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner, Result
 from notebook_fakes import OPEN_CLIENT, FakeNotebookClient
+from notebooklm import SourceStatus
 from zotero_fakes import FakeZoteroLibrary
 
 from research_toolkit.cli import cli
@@ -153,6 +154,75 @@ class SyncNotebookCliTest(unittest.TestCase):
             report["failed"], [{"key": "K1", "title": "Green AI", "error": "upload exploded"}]
         )
         self.assertEqual(self.keys(report["added"]), ["K2"])
+
+    def test_title_reverted_to_filename_on_upload_is_renamed(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        self.fake.title_resets["[K1]"] = "immediate"
+
+        report = self.report(self.run_sync("--collection", COLLECTION))
+
+        [nb_id] = self.fake.notebook_ids(COLLECTION)
+        self.assertEqual(self.keys(report["added"]), ["K1", "K2"])
+        self.assertEqual(report["renamed"], [{"key": "K1", "title": "Green AI"}])
+        self.assertEqual(self.fake.source_titles(nb_id), ["[K1] Green AI", "[K2] Energy and Policy"])
+
+    def test_title_reverted_after_the_paper_was_checked_is_fixed_by_the_final_check(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        self.fake.title_resets["[K1]"] = "late"
+
+        report = self.report(self.run_sync("--collection", COLLECTION))
+
+        [nb_id] = self.fake.notebook_ids(COLLECTION)
+        self.assertEqual(self.keys(report["added"]), ["K1", "K2"])
+        self.assertEqual(report["renamed"], [{"key": "K1", "title": "Green AI"}])
+        self.assertEqual(self.fake.source_titles(nb_id), ["[K1] Green AI", "[K2] Energy and Policy"])
+
+    def test_unconfirmed_upload_residue_is_deleted_and_the_retry_is_added(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        nb_id = self.fake.add_notebook(COLLECTION)
+        self.fake.new_source(nb_id, "Green AI.pdf", status=SourceStatus.PREPARING)  # not ours
+        self.fake.unconfirmed_uploads["[K1]"] = 1
+
+        report = self.report(self.run_sync("--collection", COLLECTION))
+
+        self.assertEqual(self.keys(report["added"]), ["K1", "K2"])
+        self.assertEqual(report["failed"], [])
+        self.assertEqual(
+            self.fake.source_titles(nb_id),
+            ["Green AI.pdf", "[K1] Green AI", "[K2] Energy and Policy"],
+        )
+        self.assertEqual(len([w for w in self.fake.writes if w[0] == "delete_source"]), 1)
+        self.assertEqual(len([w for w in self.fake.writes if w[0] == "add_file"]), 3)
+
+    def test_upload_unconfirmed_twice_fails_without_leaving_residue(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        nb_id = self.fake.add_notebook(COLLECTION)
+        self.fake.unconfirmed_uploads["[K1]"] = 2
+
+        report = self.report(self.run_sync("--collection", COLLECTION))
+
+        self.assertEqual(self.keys(report["failed"]), ["K1"])
+        self.assertIn("upload failed during start", report["failed"][0]["error"])
+        self.assertEqual(self.keys(report["added"]), ["K2"])
+        self.assertEqual(len([w for w in self.fake.writes if w[0] == "add_file"]), 3)
+        self.assertEqual(self.fake.source_titles(nb_id), ["[K2] Energy and Policy"])
+        self.assertEqual(len([w for w in self.fake.writes if w[0] == "delete_source"]), 2)
+
+    def test_source_not_ready_within_180_seconds_is_failed(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        self.fake.processing_timeouts.add("[K1]")
+
+        report = self.report(self.run_sync("--collection", COLLECTION))
+
+        self.assertEqual(self.keys(report["failed"]), ["K1"])
+        self.assertIn("180", report["failed"][0]["error"])
+        self.assertEqual(self.keys(report["added"]), ["K2"])
+        self.assertEqual(report["renamed"], [])
 
     def test_progress_goes_to_stderr_and_stdout_is_only_json(self) -> None:
         self.zotero.add_paper(self.col, "K1", "Green AI")

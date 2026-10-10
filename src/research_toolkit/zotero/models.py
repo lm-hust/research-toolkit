@@ -35,6 +35,11 @@ class ZoteroItem:
     has_pdf: bool = False
     pdf_path: Optional[str] = None
     attachment_key: Optional[str] = None
+    # Full text chosen for upload (see ZoteroManager.list_fulltext_items): "pdf" | "epub" | "html".
+    fulltext_kind: Optional[str] = None
+    fulltext_path: Optional[str] = None
+    # Child attachments other than the chosen full text (supplements, snapshots, links...).
+    extra_attachments: int = 0
     tags: List[str] = field(default_factory=list)
     authors: List[str] = field(default_factory=list)
     year: Optional[int] = None

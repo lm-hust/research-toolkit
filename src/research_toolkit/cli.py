@@ -477,11 +477,24 @@ def checkpoint(collection: Optional[str], status: bool) -> None:
     default=None,
     help="Target Gemini Notebook UUID or exact title. Default: the collection's name (created if missing).",
 )
-def sync_notebook(collection: str, notebook: Optional[str]) -> None:
-    """Sync a Zotero collection's full texts into a Gemini Notebook as `[key] title` sources."""
+@click.option(
+    "--allow-url",
+    is_flag=True,
+    help="For items with no PDF/EPUB/HTML snapshot, let Gemini Notebook fetch the DOI or URL "
+    "(may only get a paywall page).",
+)
+def sync_notebook(collection: str, notebook: Optional[str], allow_url: bool) -> None:
+    """Sync a Zotero collection's full texts into a Gemini Notebook as `[key] title` sources.
+
+    Each item contributes its first PDF, else an EPUB, else its HTML snapshot (as markdown).
+    """
     try:
         report = notebook_sync.sync_collection(
-            ZoteroManager(), collection, notebook, progress=lambda m: click.echo(m, err=True)
+            ZoteroManager(),
+            collection,
+            notebook,
+            progress=lambda m: click.echo(m, err=True),
+            allow_url=allow_url,
         )
     except notebook_sync.SyncError as e:
         click.echo(f"Error: {e}", err=True)
