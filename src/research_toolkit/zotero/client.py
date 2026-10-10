@@ -19,6 +19,10 @@ from research_toolkit.zotero.models import ZoteroCollection
 logger = logging.getLogger(__name__)
 
 
+class ZoteroWriteError(Exception):
+    """Zotero accepted the request but rejected the write (its `failed` map is non-empty)."""
+
+
 class ZoteroClient:
     """
     HTTP client for the Zotero Web API v3.
@@ -195,6 +199,31 @@ class ZoteroClient:
             successful = resp.get("successful") or resp.get("success") or {}
             return list(successful.values())
         return []
+
+    def create_child_note(self, parent_key: str, note_html: str, tags: List[str]) -> str:
+        """
+        Creates a note under `parent_key` and returns the new note's key. Zotero notes have no
+        title field: the first line of `note_html` is what Zotero shows as the title.
+        """
+        payload = [
+            {
+                "itemType": "note",
+                "parentItem": parent_key,
+                "note": note_html,
+                "tags": [{"tag": t} for t in tags],
+            }
+        ]
+        resp = self._request("POST", "/items", payload=payload)
+        failed = resp.get("failed") if isinstance(resp, dict) else None
+        if failed:
+            reasons = "; ".join(str(f.get("message", f)) for f in failed.values())
+            raise ZoteroWriteError(f"Zotero rejected the note under {parent_key}: {reasons}")
+        successful = resp.get("successful", {}) if isinstance(resp, dict) else {}
+        created: Any = next(iter(successful.values()), {})
+        key = created.get("key", "") if isinstance(created, dict) else ""
+        if not key:
+            raise ZoteroWriteError(f"Zotero returned no key for the note under {parent_key}")
+        return str(key)
 
     def create_attachment_link(
         self, parent_key: str, title: str, url: str, content_type: str = "application/pdf"

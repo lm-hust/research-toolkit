@@ -14,7 +14,7 @@ from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Protocol
 
-from notebooklm import Notebook, NotebookLMClient, Source
+from notebooklm import AskResult, Note, Notebook, NotebookLMClient, Source
 from notebooklm.options import AndroidBackendConfig, ClientConfig
 
 
@@ -39,12 +39,40 @@ class SourcesApi(Protocol):
     ) -> Source: ...
 
 
+class ChatApi(Protocol):
+    async def ask(
+        self,
+        notebook_id: str,
+        question: str,
+        source_ids: list[str] | None = None,
+        conversation_id: str | None = None,
+    ) -> AskResult: ...
+
+    async def get_conversation_id(self, notebook_id: str) -> str | None: ...
+
+    async def get_history(
+        self, notebook_id: str, limit: int = 100, conversation_id: str | None = None
+    ) -> list[tuple[str, str]]: ...
+
+    async def delete_conversation(self, notebook_id: str, conversation_id: str) -> None: ...
+
+
+class NotesApi(Protocol):
+    async def create(self, notebook_id: str, title: str = "New Note", content: str = "") -> Note: ...
+
+
 class NotebookClient(Protocol):
     @property
     def notebooks(self) -> NotebooksApi: ...
 
     @property
     def sources(self) -> SourcesApi: ...
+
+    @property
+    def chat(self) -> ChatApi: ...
+
+    @property
+    def notes(self) -> NotesApi: ...
 
 
 def open_client() -> AbstractAsyncContextManager[NotebookClient]:

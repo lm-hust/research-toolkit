@@ -16,6 +16,7 @@ import click
 from research_toolkit.discovery.curation import CurationCheckpoint
 from research_toolkit.discovery.query import QueryTranslator
 from research_toolkit.discovery.service import DiscoveryService
+from research_toolkit.notebook import skim as notebook_skim
 from research_toolkit.notebook import sync as notebook_sync
 from research_toolkit.zotero.manager import ZoteroManager
 
@@ -483,6 +484,26 @@ def sync_notebook(collection: str, notebook: Optional[str]) -> None:
             ZoteroManager(), collection, notebook, progress=lambda m: click.echo(m, err=True)
         )
     except notebook_sync.SyncError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+@cli.command("skim-notebook")
+@click.option("--notebook", required=True, help="Gemini Notebook UUID or exact title.")
+@click.option(
+    "--key", "keys", multiple=True, required=True, help="Zotero item key of a `[key]` source (repeatable)."
+)
+def skim_notebook(notebook: str, keys: tuple[str, ...]) -> None:
+    """Skim `[key]` sources one by one in fresh conversations; write each as a Zotero child note.
+
+    The notebook's existing conversation is saved as a notebook note before it is replaced.
+    """
+    try:
+        report = notebook_skim.skim_notebook(
+            ZoteroManager().client, notebook, list(keys), progress=lambda m: click.echo(m, err=True)
+        )
+    except notebook_skim.SkimError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     click.echo(json.dumps(report, ensure_ascii=False, indent=2))
