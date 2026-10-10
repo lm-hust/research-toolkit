@@ -333,24 +333,77 @@ class ZoteroManager:
                     tags=tags,
                 )
 
-        # Associate PDF attachments with parent items (probing disk or resolving from cloud)
         for p_key, item in parent_items.items():
-            for att in attachments.get(p_key, []):
-                att_key = att.get("key", "")
-                att_data = att.get("data", {})
-                content_type = att_data.get("contentType", "")
-
-                if "pdf" in content_type.lower() or att_data.get("filename", "").endswith(".pdf"):
-                    item.attachment_key = att_key
-                    resolved_pdf = self.resolve_attachment_pdf(
-                        att_key, auto_download_cloud=auto_download_cloud
-                    )
-                    if resolved_pdf:
-                        item.has_pdf = True
-                        item.pdf_path = str(resolved_pdf)
-                        break
+            self._choose_fulltext(item, attachments.get(p_key, []), auto_download_cloud)
 
         return list(parent_items.values())
+
+    def _choose_fulltext(
+        self, item: ZoteroItem, attachments: List[Dict[str, Any]], auto_download_cloud: bool
+    ) -> None:
+        """
+        Sets item.fulltext_* to the first resolvable attachment in FULLTEXT_KINDS order
+        (any PDF beats any EPUB beats any HTML snapshot) and counts the other attachments.
+        """
+        item.extra_attachments = len(attachments)
+        for kind in self.FULLTEXT_KINDS:
+            for att in attachments:
+                if self._attachment_kind(att.get("data", {})) != kind:
+                    continue
+                att_key = att.get("key", "")
+                if kind == "pdf":
+                    item.attachment_key = att_key
+                resolved = self._resolve_attachment(att, kind, auto_download_cloud)
+                if not resolved:
+                    continue
+                if kind == "pdf":
+                    item.has_pdf = True
+                    item.pdf_path = str(resolved)
+                item.attachment_key = att_key
+                item.fulltext_kind = kind
+                item.fulltext_path = str(resolved)
+                item.extra_attachments -= 1
+                return
+
+    FULLTEXT_KINDS = ("pdf", "epub", "html")
+
+    @staticmethod
+    def _attachment_kind(att_data: Dict[str, Any]) -> Optional[str]:
+        content_type = att_data.get("contentType", "").lower()
+        filename = att_data.get("filename", "").lower()
+        if "pdf" in content_type or filename.endswith(".pdf"):
+            return "pdf"
+        if content_type == "application/epub+zip" or filename.endswith(".epub"):
+            return "epub"
+        if content_type in ("text/html", "application/xhtml+xml") or filename.endswith(
+            (".html", ".htm")
+        ):
+            return "html"
+        return None
+
+    def _resolve_attachment(
+        self, att: Dict[str, Any], kind: str, auto_download_cloud: bool
+    ) -> Optional[Path]:
+        """
+        Local storage first. PDF and EPUB fall back to Zotero Cloud Storage; HTML snapshots are
+        local only (cloud storage can hold a snapshot as a zipped page bundle, not one file).
+        """
+        att_key = att.get("key", "")
+        if kind == "pdf":
+            return self.resolve_attachment_pdf(att_key, auto_download_cloud=auto_download_cloud)
+        attach_dir = self.storage_dir / att_key
+        filename = att.get("data", {}).get("filename")
+        candidates = [attach_dir / Path(filename).name] if filename else []
+        patterns = ("*.epub",) if kind == "epub" else ("*.html", "*.htm")
+        if attach_dir.is_dir():
+            for pattern in patterns:
+                candidates.extend(sorted(attach_dir.glob(pattern)))
+        for path in candidates:
+            if path.is_file() and path.stat().st_size > 0:
+                return path
+        if kind == "epub" and auto_download_cloud and att_key:
+            return self.client.download_item_file(att_key, attach_dir / f"{att_key}.epub")
+        return None
 
     def scan_collection_checkpoint(
         self,

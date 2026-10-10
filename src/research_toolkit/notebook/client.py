@@ -38,6 +38,16 @@ class SourcesApi(Protocol):
         title: str | None = None,
     ) -> Source: ...
 
+    async def add_url(
+        self,
+        notebook_id: str,
+        url: str,
+        *,
+        wait: bool = False,
+        wait_timeout: float = 120.0,
+        title: str | None = None,
+    ) -> Source: ...
+
     async def wait_until_ready(
         self, notebook_id: str, source_id: str, timeout: float = 120.0
     ) -> Source: ...
@@ -47,7 +57,6 @@ class SourcesApi(Protocol):
     ) -> Source | None: ...
 
     async def delete(self, notebook_id: str, source_id: str) -> None: ...
-
 
 class NotebookClient(Protocol):
     @property

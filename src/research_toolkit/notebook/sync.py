@@ -22,6 +22,7 @@ from notebooklm import NotebookLMError, Source
 
 from research_toolkit.notebook import client as notebook_client
 from research_toolkit.notebook.client import NotebookClient
+from research_toolkit.notebook.fulltext import URL_KIND, upload_kind, upload_target
 from research_toolkit.notebook.resolve import NotebookResolutionError, resolve_notebook
 from research_toolkit.notebook.titles import source_key, source_title
 from research_toolkit.zotero.manager import ZoteroManager
@@ -45,6 +46,7 @@ def sync_collection(
     collection_ref: str,
     notebook_ref: Optional[str] = None,
     progress: Progress = lambda _msg: None,
+    allow_url: bool = False,
 ) -> dict[str, Any]:
     """Syncs one Zotero collection (name or key) and returns the JSON-ready report."""
     try:
@@ -56,7 +58,7 @@ def sync_collection(
 
     progress(f"Resolving full texts in Zotero collection '{collection.name}'...")
     items = manager.list_fulltext_items(collection.key)
-    return asyncio.run(_sync_items(items, notebook_ref, collection.name, progress))
+    return asyncio.run(_sync_items(items, notebook_ref, collection.name, progress, allow_url))
 
 
 async def _sync_items(
@@ -64,6 +66,7 @@ async def _sync_items(
     notebook_ref: Optional[str],
     default_title: str,
     progress: Progress,
+    allow_url: bool,
 ) -> dict[str, Any]:
     async with notebook_client.open_client() as client:
         try:
@@ -81,18 +84,24 @@ async def _sync_items(
             "missing_fulltext": [],
             "renamed": [],
             "failed": [],
+            "extra_attachments": [
+                {**_entry(item), "count": item.extra_attachments}
+                for item in items
+                if item.fulltext_kind and item.extra_attachments
+            ],
         }
         sources = await client.sources.list(notebook.id)
         existing = {source_key(s.title) for s in sources}
         uploader = _Uploader(client, notebook.id, report, progress, {s.id for s in sources})
 
         for item in items:
+            kind = upload_kind(item, allow_url)
             if item.key in existing:
                 report["skipped_existing"].append(_entry(item))
-            elif not item.pdf_path:
+            elif kind is None:
                 report["missing_fulltext"].append(_entry(item))
             else:
-                await uploader.upload(item, item.pdf_path)
+                await uploader.upload(item, kind)
         await uploader.recheck_titles()
         return report
 
@@ -118,12 +127,13 @@ class _Uploader:
         self.known_ids = known_ids  # sources not left behind by the upload in progress
         self.uploaded: dict[str, ZoteroItem] = {}  # source id -> item, added in this run
 
-    async def upload(self, item: ZoteroItem, path: str) -> None:
+    async def upload(self, item: ZoteroItem, kind: str) -> None:
         """Upload -> wait until ready -> fix the title. Any failure goes to `failed`."""
-        self.progress(f"Uploading [{item.key}] {item.title[:60]}")
+        self.progress(f"Uploading [{item.key}] ({kind}) {item.title[:60]}")
         wanted = source_title(item.key, item.title)
         try:
-            source = await self._add_file(path, wanted)
+            with upload_target(item, kind) as target:
+                source = await self._add(target, wanted, is_url=kind == URL_KIND)
             self.known_ids.add(source.id)
             ready = await self.client.sources.wait_until_ready(
                 self.notebook_id, source.id, timeout=READY_TIMEOUT
@@ -134,7 +144,7 @@ class _Uploader:
             self.report["failed"].append({**_entry(item), "error": str(e)})
             return
         self.uploaded[source.id] = item
-        self.report["added"].append(_entry(item))
+        self.report["added"].append({**_entry(item), "kind": kind})
 
     async def recheck_titles(self) -> None:
         """Catches titles the server reset after the per-paper check."""
@@ -145,16 +155,21 @@ class _Uploader:
             if item is not None:
                 await self._ensure_title(source, item)
 
-    async def _add_file(self, path: str, wanted: str) -> Source:
-        """add_file; after an UNCONFIRMED_WRITE, removes its residue and retries once."""
+    async def _add(self, target: str, wanted: str, is_url: bool) -> Source:
+        """add_file (or add_url); after an UNCONFIRMED_WRITE, removes its residue, retries once."""
+        sources = self.client.sources
         for attempt in (1, 2):
             try:
-                return await self.client.sources.add_file(self.notebook_id, path, title=wanted)
+                if is_url:
+                    return await sources.add_url(self.notebook_id, target, title=wanted)
+                return await sources.add_file(self.notebook_id, target, title=wanted)
             except NotebookLMError as e:
                 if not e.unconfirmed:
                     raise
                 self.progress(f"  unconfirmed upload ({e}); removing its residue")
-                landed = await self._clean_residue(Path(path).name, wanted)
+                landed = await self._clean_residue(
+                    target if is_url else Path(target).name, wanted
+                )
                 if landed is not None:
                     return landed
                 if attempt == 2:

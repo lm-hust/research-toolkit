@@ -37,12 +37,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from notebooklm import NetworkError, Notebook, Source, SourceStatus, SourceTimeoutError
+from notebooklm import (
+    NetworkError,
+    Notebook,
+    Source,
+    SourceStatus,
+    SourceTimeoutError,
+    ValidationError,
+)
 from notebooklm.outcomes import CommitState, OperationMetadata
 
 from research_toolkit.notebook.client import NotebookClient
 
 OPEN_CLIENT = "research_toolkit.notebook.client.open_client"
+HTML_SUFFIXES = (".html", ".htm", ".xhtml", ".xht")
 
 
 class _UnconfirmedUpload(NetworkError):
@@ -96,6 +104,8 @@ class FakeSourcesAPI:
         for needle, error in self._fake.upload_errors.items():
             if needle in wanted:
                 raise error
+        if path.suffix.lower() in HTML_SUFFIXES:  # real client: notebooklm.ValidationError
+            raise ValidationError("HTML file uploads are not supported")
         for needle, remaining in self._fake.unconfirmed_uploads.items():
             if needle in wanted and remaining > 0:
                 self._fake.unconfirmed_uploads[needle] = remaining - 1
@@ -111,6 +121,7 @@ class FakeSourcesAPI:
         if reset == "late":
             self._fake.late_resets[src.id] = path.name
         self._fake.uploaded_paths.append(path)
+        self._fake.uploaded_contents.append(path.read_bytes())
         return Source(id=src.id, title=wanted, status=src.status)
 
     async def wait_until_ready(
@@ -138,12 +149,28 @@ class FakeSourcesAPI:
         sources = self._fake.state[notebook_id].sources
         sources[:] = [s for s in sources if s.id != source_id]
 
+    async def add_url(
+        self,
+        notebook_id: str,
+        url: str,
+        *,
+        wait: bool = False,
+        wait_timeout: float = 120.0,
+        title: str | None = None,
+    ) -> Source:
+        self._fake.writes.append(("add_url", notebook_id, title, url))
+        for needle, error in self._fake.upload_errors.items():
+            if needle in (title or url):
+                raise error
+        return self._fake.new_source(notebook_id, title or url)
+
 
 class FakeNotebookClient:
     def __init__(self) -> None:
         self.state: dict[str, FakeNotebookState] = {}
         self.writes: list[tuple[Any, ...]] = []
         self.uploaded_paths: list[Path] = []
+        self.uploaded_contents: list[bytes] = []  # file bytes at upload time
         self.upload_errors: dict[str, Exception] = {}
         self.title_resets: dict[str, str] = {}
         self.unconfirmed_uploads: dict[str, int] = {}

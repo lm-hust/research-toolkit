@@ -117,7 +117,7 @@ PYTHONPATH=src python3 -m research_toolkit.cli checkpoint --status
 
 ### 阶段 3：创建研读笔记本并同步来源 (`sync-notebook`)
 
-把一个 Zotero collection 中有 PDF 的条目增量同步到 Gemini Notebook（NotebookLM）：
+把一个 Zotero collection 的全文增量同步到 Gemini Notebook（NotebookLM）：
 
 ```bash
 # 默认使用与 collection 同名的笔记本，不存在就新建
@@ -125,9 +125,13 @@ uv run research-toolkit sync-notebook --collection intelligence-per-kwh
 
 # 指定已有笔记本（完整标题或 UUID；同名有多个时报错，请改用 UUID）
 uv run research-toolkit sync-notebook --collection intelligence-per-kwh --notebook <UUID>
+
+# 没有全文文件的条目，允许 Gemini Notebook 自行抓取 DOI/URL（可能只抓到付费墙页面）
+uv run research-toolkit sync-notebook --collection intelligence-per-kwh --allow-url
 ```
+- 每个条目只取第一个 PDF；没有 PDF 时依次用 EPUB、Zotero 网页快照（本地转成 markdown 上传），都没有则列入 `missing_fulltext`。其余附件数记入 `extra_attachments`。
 - 每个来源标题为 `[Zotero条目key] 论文标题`；已存在 `[key]` 的条目跳过，重跑即可续传。
-- stdout 只输出 JSON 报告（`notebook_id`、`notebook_title`、`created`、`added`、`skipped_existing`、`missing_fulltext`、`failed`），进度走 stderr。
+- stdout 只输出 JSON 报告（`notebook_id`、`notebook_title`、`created`、`added`（含 `kind`：pdf/epub/html/url）、`skipped_existing`、`missing_fulltext`、`failed`、`extra_attachments`），进度走 stderr。
 
 ---
 
