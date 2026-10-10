@@ -100,3 +100,19 @@ class TestGetCollection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGetSubcollections(unittest.TestCase):
+    @patch("urllib.request.urlopen")
+    def test_lists_direct_subcollections_of_a_key(self, mock_urlopen):
+        mock_urlopen.side_effect = [
+            _resp([{"key": "SUB00001", "version": 2, "data": {"name": "pue", "parentCollection": "KS2HSWPE"}}])
+        ]
+        client = ZoteroClient(api_key="k", user_id="1")
+
+        [sub] = client.get_subcollections("KS2HSWPE")
+
+        self.assertEqual((sub.key, sub.name, sub.parent_collection), ("SUB00001", "pue", "KS2HSWPE"))
+        req = mock_urlopen.call_args_list[0][0][0]
+        self.assertEqual(req.get_method(), "GET")
+        self.assertIn("/users/1/collections/KS2HSWPE/collections?", req.full_url)

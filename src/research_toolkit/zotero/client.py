@@ -172,13 +172,20 @@ class ZoteroClient:
             raise ValueError(f"Collection name '{key_or_name}' is ambiguous; use a key: {keys}")
         if not matches:
             return None
-        col = matches[0]
-        c_data = col.get("data", {})
+        return self._collection_from_row(matches[0])
+
+    def get_subcollections(self, collection_key: str) -> List[ZoteroCollection]:
+        """Lists the direct subcollections of a collection (one level)."""
+        rows = self._get_all(f"/collections/{collection_key}/collections")
+        return [self._collection_from_row(row) for row in rows]
+
+    def _collection_from_row(self, row: Dict[str, Any]) -> ZoteroCollection:
+        data = row.get("data", {})
         return ZoteroCollection(
-            key=col.get("key", ""),
-            name=c_data.get("name", ""),
-            parent_collection=c_data.get("parentCollection") or None,
-            version=col.get("version", 0),
+            key=row.get("key", ""),
+            name=data.get("name", ""),
+            parent_collection=data.get("parentCollection") or None,
+            version=row.get("version", 0),
             user_id=self.user_id,
         )
 

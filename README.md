@@ -125,9 +125,20 @@ uv run research-toolkit sync-notebook --collection intelligence-per-kwh
 
 # 指定已有笔记本（完整标题或 UUID；同名有多个时报错，请改用 UUID）
 uv run research-toolkit sync-notebook --collection intelligence-per-kwh --notebook <UUID>
+
+# 先预演：只输出计划，不做任何写入（也不新建笔记本）
+uv run research-toolkit sync-notebook --collection intelligence-per-kwh --dry-run
+
+# 多个 collection 合并到一个笔记本（必须给 --notebook）；--recursive 包含子 collection
+uv run research-toolkit sync-notebook -c 度电智能 -c 数据中心 --recursive --notebook 度电智能
+
+# 重传某一篇（先删旧来源再上传），可重复
+uv run research-toolkit sync-notebook --collection intelligence-per-kwh --replace ABCD1234
 ```
 - 每个来源标题为 `[Zotero条目key] 论文标题`；已存在 `[key]` 的条目跳过，重跑即可续传。
-- stdout 只输出 JSON 报告（`notebook_id`、`notebook_title`、`created`、`added`、`skipped_existing`、`missing_fulltext`、`failed`），进度走 stderr。
+- 上传前先算计划：新增、已存在、缺全文、`orphaned`（笔记本里有、输入里没有；只报告，从不删除）。
+- 已有来源数 + 新增数超过 300 时一篇都不传；目标笔记本中大部分来源没有 `[key]` 标题（手动维护）时拒绝写入，除非加 `--force`。两种情况都在报告的 `aborted_reason` 中说明。
+- stdout 只输出 JSON 报告（`notebook_id`、`notebook_title`、`created`、`dry_run`、`aborted_reason`、`added`、`replaced`、`skipped_existing`、`missing_fulltext`、`orphaned`、`failed`、`extra_attachments`、`source_count`、`projected_source_count`），进度走 stderr。
 
 ---
 

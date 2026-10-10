@@ -163,5 +163,167 @@ class SyncNotebookCliTest(unittest.TestCase):
         self.assertIn("[K1]", result.stderr)
 
 
+    def test_dry_run_reports_the_plan_without_writing(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        self.zotero.add_paper(self.col, "K3", "No PDF here", pdf=False)
+        nb_id = self.fake.add_notebook(COLLECTION, ["[K1] Green AI", "[GONE] Removed paper"])
+
+        report = self.report(self.run_sync("--collection", COLLECTION, "--dry-run"))
+
+        self.assertTrue(report["dry_run"])
+        self.assertIsNone(report["aborted_reason"])
+        self.assertEqual(report["notebook_id"], nb_id)
+        self.assertEqual(self.keys(report["added"]), ["K2"])
+        self.assertEqual(self.keys(report["skipped_existing"]), ["K1"])
+        self.assertEqual(self.keys(report["missing_fulltext"]), ["K3"])
+        self.assertEqual(self.keys(report["orphaned"]), ["GONE"])
+        self.assertEqual(self.fake.writes, [])
+
+    def test_dry_run_does_not_create_a_missing_notebook(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+
+        report = self.report(self.run_sync("--collection", COLLECTION, "--dry-run"))
+
+        self.assertIsNone(report["notebook_id"])
+        self.assertEqual(report["notebook_title"], COLLECTION)
+        self.assertFalse(report["created"])
+        self.assertEqual(self.keys(report["added"]), ["K1"])
+        self.assertEqual(self.fake.writes, [])
+        self.assertEqual(self.fake.notebook_ids(COLLECTION), [])
+
+
+    def test_over_the_source_limit_uploads_nothing(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        nb_id = self.fake.add_notebook(COLLECTION, [f"[OLD{i}] Paper {i}" for i in range(299)])
+
+        report = self.report(self.run_sync("--collection", COLLECTION))
+
+        self.assertIn("301", report["aborted_reason"])
+        self.assertIn("300", report["aborted_reason"])
+        self.assertEqual(report["added"], [])
+        self.assertEqual(self.fake.writes, [])
+        self.assertEqual(len(self.fake.source_titles(nb_id)), 299)
+
+    def test_exactly_at_the_source_limit_still_syncs(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.fake.add_notebook(COLLECTION, [f"[OLD{i}] Paper {i}" for i in range(299)])
+
+        report = self.report(self.run_sync("--collection", COLLECTION))
+
+        self.assertIsNone(report["aborted_reason"])
+        self.assertEqual(self.keys(report["added"]), ["K1"])
+
+    def test_manual_notebook_is_refused_without_force(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        nb_id = self.fake.add_notebook(
+            "Identity", ["My CV.pdf", "Grant 2024.pdf", "[K9] One synced paper"]
+        )
+
+        refused = self.report(self.run_sync("--collection", COLLECTION, "--notebook", "Identity"))
+
+        self.assertIn("--force", refused["aborted_reason"])
+        self.assertEqual(refused["added"], [])
+        self.assertEqual(self.fake.writes, [])
+
+        forced = self.report(
+            self.run_sync("--collection", COLLECTION, "--notebook", "Identity", "--force")
+        )
+
+        self.assertIsNone(forced["aborted_reason"])
+        self.assertEqual(self.keys(forced["added"]), ["K1"])
+        self.assertIn("[K1] Green AI", self.fake.source_titles(nb_id))
+
+    def test_several_collections_sync_into_one_notebook(self) -> None:
+        other = self.zotero.add_collection("data-centres", key="DC000001")
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(other, "K2", "Data centre PUE")
+        self.zotero.add_paper(other, "K1", "Green AI")  # the same item in both collections
+        target = self.fake.add_notebook("度电智能")
+
+        report = self.report(
+            self.run_sync(
+                "--collection", COLLECTION, "--collection", "DC000001", "--notebook", "度电智能"
+            )
+        )
+
+        self.assertEqual(report["notebook_id"], target)
+        self.assertEqual(self.keys(report["added"]), ["K1", "K2"])
+        self.assertEqual(
+            self.fake.source_titles(target), ["[K1] Green AI", "[K2] Data centre PUE"]
+        )
+
+    def test_several_collections_need_an_explicit_notebook(self) -> None:
+        self.zotero.add_collection("data-centres")
+
+        result = self.run_sync("--collection", COLLECTION, "--collection", "data-centres")
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("--notebook", result.stderr)
+        self.assertEqual(self.fake.writes, [])
+
+    def test_subcollections_only_with_recursive(self) -> None:
+        sub = self.zotero.add_collection("pue", parent=self.col)
+        subsub = self.zotero.add_collection("cooling", parent=sub)
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(sub, "K2", "PUE trends")
+        self.zotero.add_paper(subsub, "K3", "Liquid cooling")
+
+        flat = self.report(self.run_sync("--collection", COLLECTION, "--dry-run"))
+        self.assertEqual(self.keys(flat["added"]), ["K1"])
+
+        deep = self.report(self.run_sync("--collection", COLLECTION, "--recursive"))
+        self.assertEqual(sorted(self.keys(deep["added"])), ["K1", "K2", "K3"])
+        [nb_id] = self.fake.notebook_ids(COLLECTION)
+        self.assertEqual(len(self.fake.source_titles(nb_id)), 3)
+
+    def test_replace_deletes_the_old_source_then_uploads(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.zotero.add_paper(self.col, "K2", "Energy and Policy")
+        nb_id = self.fake.add_notebook(COLLECTION, ["[K1] Green AI (preprint)", "[K2] Energy and Policy"])
+        [old_k1, _] = self.fake.state[nb_id].sources
+
+        report = self.report(self.run_sync("--collection", COLLECTION, "--replace", "K1"))
+
+        self.assertEqual(self.keys(report["added"]), ["K1"])
+        self.assertEqual(self.keys(report["skipped_existing"]), ["K2"])
+        self.assertEqual(
+            report["replaced"],
+            [{"key": "K1", "title": "[K1] Green AI (preprint)", "source_id": old_k1.id}],
+        )
+        self.assertEqual(
+            [w[0] for w in self.fake.writes], ["delete_source", "add_file"]
+        )
+        self.assertEqual(
+            self.fake.source_titles(nb_id), ["[K2] Energy and Policy", "[K1] Green AI"]
+        )
+
+    def test_replace_on_dry_run_writes_nothing(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        self.fake.add_notebook(COLLECTION, ["[K1] Green AI (preprint)"])
+
+        report = self.report(
+            self.run_sync("--collection", COLLECTION, "--replace", "K1", "--dry-run")
+        )
+
+        self.assertEqual(self.keys(report["added"]), ["K1"])
+        self.assertEqual(self.fake.writes, [])
+
+    def test_orphaned_sources_are_reported_not_deleted(self) -> None:
+        self.zotero.add_paper(self.col, "K1", "Green AI")
+        nb_id = self.fake.add_notebook(COLLECTION, ["[GONE] Removed paper", "[K1] Green AI"])
+
+        report = self.report(self.run_sync("--collection", COLLECTION))
+
+        [orphan] = report["orphaned"]
+        self.assertEqual(orphan["key"], "GONE")
+        self.assertEqual(orphan["title"], "[GONE] Removed paper")
+        self.assertEqual(self.fake.writes, [])
+        self.assertEqual(
+            self.fake.source_titles(nb_id), ["[GONE] Removed paper", "[K1] Green AI"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

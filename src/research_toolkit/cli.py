@@ -470,17 +470,41 @@ def checkpoint(collection: Optional[str], status: bool) -> None:
 
 
 @cli.command("sync-notebook")
-@click.option("--collection", "-c", required=True, help="Zotero collection name or key.")
+@click.option(
+    "--collection", "-c", "collections", required=True, multiple=True,
+    help="Zotero collection name or key. Repeat to sync several collections into one notebook.",
+)
 @click.option(
     "--notebook",
     default=None,
     help="Target Gemini Notebook UUID or exact title. Default: the collection's name (created if missing).",
 )
-def sync_notebook(collection: str, notebook: Optional[str]) -> None:
-    """Sync a Zotero collection's full texts into a Gemini Notebook as `[key] title` sources."""
+@click.option("--recursive", is_flag=True, help="Include every subcollection.")
+@click.option(
+    "--replace", "replace", multiple=True, metavar="KEY",
+    help="Delete the source of this Zotero key and upload it again. Repeatable.",
+)
+@click.option("--dry-run", is_flag=True, help="Print the plan only; write nothing.")
+@click.option("--force", is_flag=True, help="Sync into a notebook whose sources mostly lack [key] titles.")
+def sync_notebook(
+    collections: tuple[str, ...],
+    notebook: Optional[str],
+    recursive: bool,
+    replace: tuple[str, ...],
+    dry_run: bool,
+    force: bool,
+) -> None:
+    """Sync Zotero collections' full texts into a Gemini Notebook as `[key] title` sources."""
     try:
-        report = notebook_sync.sync_collection(
-            ZoteroManager(), collection, notebook, progress=lambda m: click.echo(m, err=True)
+        report = notebook_sync.sync_collections(
+            ZoteroManager(),
+            collections,
+            notebook,
+            recursive=recursive,
+            replace=replace,
+            dry_run=dry_run,
+            force=force,
+            progress=lambda m: click.echo(m, err=True),
         )
     except notebook_sync.SyncError as e:
         click.echo(f"Error: {e}", err=True)

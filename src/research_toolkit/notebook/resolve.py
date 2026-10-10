@@ -16,19 +16,19 @@ class NotebookResolutionError(Exception):
     """The notebook reference is ambiguous or names nothing."""
 
 
-async def resolve_notebook(
+async def find_notebook(
     client: NotebookClient, ref: Optional[str], default_title: str
-) -> tuple[Notebook, bool]:
+) -> Optional[Notebook]:
     """
-    Returns (notebook, created). `ref` matches a full notebook id or an exact title.
-    With no `ref`, `default_title` is used and created when absent. Several notebooks with
-    the same title is an error: the caller must pass the UUID.
+    Returns the notebook `ref` names (a full notebook id or an exact title), or, with no `ref`,
+    the one titled `default_title`; None when that default is absent. Never creates anything.
+    Several notebooks with the same title is an error: the caller must pass the UUID.
     """
     notebooks = await client.notebooks.list()
     if ref:
         by_id = [nb for nb in notebooks if nb.id == ref]
         if by_id:
-            return by_id[0], False
+            return by_id[0]
     wanted = ref or default_title
     matches = [nb for nb in notebooks if nb.title == wanted]
     if len(matches) > 1:
@@ -37,7 +37,17 @@ async def resolve_notebook(
             f"{len(matches)} notebooks are titled '{wanted}'; pass --notebook <UUID>: {ids}"
         )
     if matches:
-        return matches[0], False
+        return matches[0]
     if ref:
         raise NotebookResolutionError(f"No notebook with id or title '{ref}'.")
-    return await client.notebooks.create(wanted), True
+    return None
+
+
+async def resolve_notebook(
+    client: NotebookClient, ref: Optional[str], default_title: str
+) -> tuple[Notebook, bool]:
+    """Like `find_notebook`, but creates the default notebook when absent: (notebook, created)."""
+    notebook = await find_notebook(client, ref, default_title)
+    if notebook:
+        return notebook, False
+    return await client.notebooks.create(ref or default_title), True

@@ -38,6 +38,8 @@ class SourcesApi(Protocol):
         title: str | None = None,
     ) -> Source: ...
 
+    async def delete(self, notebook_id: str, source_id: str) -> None: ...
+
 
 class NotebookClient(Protocol):
     @property

@@ -35,6 +35,7 @@ class ZoteroItem:
     has_pdf: bool = False
     pdf_path: Optional[str] = None
     attachment_key: Optional[str] = None
+    extra_attachments: int = 0
     tags: List[str] = field(default_factory=list)
     authors: List[str] = field(default_factory=list)
     year: Optional[int] = None

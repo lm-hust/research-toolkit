@@ -9,6 +9,9 @@ Usage:
         ...run the command...
     fake.source_titles(nb_id); fake.writes
 
+Every write is logged in `fake.writes`: ("create_notebook", title),
+("add_file", nb_id, title, filename), ("delete_source", nb_id, source_id).
+
 The fake returns the real `notebooklm.Notebook` / `notebooklm.Source` dataclasses so code
 under test sees the same attribute shapes as in production.
 
@@ -80,6 +83,11 @@ class FakeSourcesAPI:
         src = self._fake.new_source(notebook_id, title or path.name)
         self._fake.uploaded_paths.append(path)
         return src
+
+    async def delete(self, notebook_id: str, source_id: str) -> None:
+        self._fake.writes.append(("delete_source", notebook_id, source_id))
+        sources = self._fake.state[notebook_id].sources
+        sources[:] = [s for s in sources if s.id != source_id]
 
 
 class FakeNotebookClient:
