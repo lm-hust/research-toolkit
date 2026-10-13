@@ -1,0 +1,116 @@
+# Query-first reply and complete local artifact
+
+Use this structure after both confirmation gates. Render every query slot as a **complete English string** from the confirmed blocks and its platform reference; leave no tokens, ellipses, named-block substitutions or instructions for the user to expand. This file is a generation template, not a pre-confirmed strategy.
+
+The default reply begins with section 1, then briefly summarizes alternative restrictions, coverage differences, evidence/risk and validation states. Save the full record only at a user-approved private local destination; keep actual topics, passages and queries out of public repository/tracker records.
+
+## 1. Six copyable queries — version [actual version]
+
+Status: **copyable draft**, unless actual platform/seed evidence supports a narrower validation claim. Record draft date, not a fictitious search execution date.
+
+### Scopus — main
+
+Entry: [Scopus](https://www.scopus.com/) → Advanced Search.
+
+```text
+[Render complete main query using references/scopus.md]
+```
+
+### Scopus — focused alternative
+
+Entry: Scopus → Advanced Search.
+
+```text
+[Render complete alternative using references/scopus.md]
+```
+
+Restriction/change, why it helps the intended focus, possible losses: [specific explanation, not measured precision].
+
+### Web of Science Core Collection — main
+
+Entry: [Web of Science](https://www.webofscience.com/) → Core Collection → Advanced Search → Query Builder.
+
+```text
+[Render complete main query using references/web-of-science.md]
+```
+
+### Web of Science Core Collection — focused alternative
+
+Entry: Core Collection → Advanced Search → Query Builder.
+
+```text
+[Render complete alternative using references/web-of-science.md]
+```
+
+Restriction/change and possible losses: [specific explanation].
+
+### IEEE Xplore — main
+
+Entry: [IEEE Xplore](https://ieeexplore.ieee.org/) → Advanced Search → Command Search, default All Metadata.
+
+**Historical official basis; current platform untested** unless current evidence was actually obtained and recorded.
+
+```text
+[Render complete main query using references/ieee-xplore.md]
+```
+
+### IEEE Xplore — focused alternative
+
+Entry: Advanced Search → Command Search, default All Metadata.
+
+```text
+[Render complete alternative using references/ieee-xplore.md]
+```
+
+Restriction/change and possible losses: [specific explanation]. Retain the historical label for this tier too. Do not claim a strict result-set subset if changed terms/fields/semantics do not warrant it.
+
+## 2. Confirmed scope and evidence ledger
+
+- Notebook: actual title, full pinned UUID; relevant conversation ID/history context. Never include tokens/credentials.
+- Evidence rounds: questions, faithful answers, source mapping and verification results retained locally; record unavailable evidence honestly.
+- Scope confirmation: actual user decision/revision and when observed. If replayed, label **synthetic fixture decision**, not live human approval.
+
+| CIMO dimension | Confirmed meaning/status | Notebook source title and ID | Supporting passage / evidence gap |
+| --- | --- | --- | --- |
+| Context | | | |
+| Intervention | | | |
+| Mechanism | | | |
+| Outcome | | | |
+
+Use evidenced / unclear / evidence-insufficient / not applicable as appropriate. Cite passages, not unsupported pages. Separate proposals from verified source wording and user intent.
+
+| Block | Confirmed CIMO link and supporting passage | English terms by class: user / verified source / model translation or expansion | Confirmed role and Boolean relationship | Metadata representation, rationale, potential losses |
+| --- | --- | --- | --- | --- |
+
+Record every core block and each restriction. List screening-only criteria and their user confirmation separately. Include block-gate decision/revisions; never turn an unobserved confirmation into a completed gate.
+
+## 3. Coverage, rule provenance and risks
+
+Consult the rule owners for details; record which exact primary rules/locators and reviewed dates support the rendered syntax. Preserve historical status and any actual recheck date/results separately. The default rule owners are [Scopus](scopus.md), [WoS](web-of-science.md) and [IEEE](ieee-xplore.md).
+
+Explain the actual broad-field differences: Scopus's indexed/expanded keyword coverage; WoS Topic's Keywords Plus; IEEE's non-exhaustive All Metadata coverage and its distinction from Full Text & Metadata. Phrase behavior differs; similar field names are not equivalence guarantees.
+
+Record alternative losses, model-expanded vocabulary, evidence gaps, screening-only criteria, coverage uncertainty and unsupported optional syntax avoided. Carry the WoS All Fields 49/100 conflict and IEEE current limits/field-prefix unknowns forward. Do not claim population recall, guaranteed precision, PRESS review or web/API parity.
+
+Methodological basis and limits (reviewed 2026-10-12 in the [methodology report](https://github.com/lm-hust/research-toolkit/blob/e6dafc111a1fb6b2d1a7fd91b69eea7ec7ac541a/docs/research/cimo-search-methodology.md)):
+- Denyer et al., [institutional abstract](https://research.tue.nl/en/publications/developing-design-propositions-through-research-synthesis/), [DOI](https://doi.org/10.1177/0170840607088020): CIMO describes design propositions, not a Boolean formula. Original full text was not recovered.
+- [Cochrane chapter 4, §4.4.2](https://www.cochrane.org/authors/handbooks-and-manuals/handbook/current/chapter-04): choose concepts question-by-question; searching every aspect may be undesirable. Clinical guidance is not an empirical engineering recall claim or proof of optimal CIMO translation.
+- [PRISMA-S, items 8, 13, 14](https://link.springer.com/article/10.1186/s13643-020-01542-z): reporting exact strategies as run, actual search dates and actual peer review; reporting guidance, not mandated concept selection.
+- [PRISMA 2020 expanded checklist, item 7](https://www.prisma-statement.org/s/PRISMA_2020_expanded_checklist-yc78.pdf): if validated with clearly eligible studies, report the process and set; not an unconditional live-validation requirement.
+- [PRESS guideline DOI](https://doi.org/10.1016/j.jclinepi.2016.01.021) and [original checklist candidate](https://www.cda-amc.ca/sites/default/files/PRESS_Peer_Review_Electronic_Search_Strate/Table_9-PRESS.pdf): original bodies were not recovered; do not claim their checklist was applied or verified. No measured recall, CIMO superiority or three-platform completeness was established by these inputs.
+
+## 4. Independent validation states
+
+| Platform | Source-rule verification (primary location, date, bounded/historical) | Local checks (actual results per main and alternative) | Platform parser test | Eligible-seed diagnostic |
+| --- | --- | --- | --- | --- |
+| Scopus | | | Untested unless run | Untested unless run |
+| WoS Core Collection | | | Untested unless run | Untested unless run |
+| IEEE Xplore | Historical official basis; current platform untested | | Untested unless run | Untested unless run |
+
+Local results enumerate English terms, quotes, parentheses, confirmed Boolean relationships, entry/field syntax and applicable phrase/wildcard rules **for each of six queries**. Failed checks require correction and a new check, not a pass label.
+
+Only actual separately authorized platform checks may record exact submitted query, date, UI/settings and parser feedback/counts. Only actual seed diagnostics may record user-confirmed eligibility, indexing, x/y indexed eligible seeds retrieved and uncertain indexing separately; parser acceptance is not seed coverage, and seed coverage is not population recall. Draft completion needs no invented live execution.
+
+## 5. Version and handoff
+
+Record exact version, preceding version if any, confirmed changes/reasons, unresolved risks, private artifact path and actual user acceptance or **pending**. Scope-changing revisions return to Notebook evidence and both gates. Optional platform/seed verification can remain pending; stop after the user accepts the version and risks.
