@@ -69,7 +69,7 @@ Restriction/change and possible losses: [specific explanation]. Retain the histo
 - Notebook: actual title, full pinned UUID; relevant conversation ID/history context. Never include tokens/credentials.
 - Evidence rounds: questions, faithful answers, source mapping and verification results retained locally; record unavailable evidence honestly.
 - Recovery record, when interrupted: condition, affected claim/scope/block, observed error/lookup, claim state (verified/unverified/unsupported), still-usable records, needed repair and resumed step. Keep unresolved original citations distinct from independently verified supporting passages.
-- Scope confirmation: actual user decision/revision and when observed. If replayed, label **synthetic fixture decision**, not live human approval. For changed scope, record the delta, obsolete affected approvals/queries, re-evaluated evidence links and fresh scope/block decisions; use [recovery.md](recovery.md) for the procedure.
+- Scope confirmation: actual user decision/revision and when observed. If replayed, label **synthetic fixture decision**, not live human approval. For changed scope, record what [scope recovery](recovery.md#scope-changes) invalidated and the fresh decisions.
 
 | CIMO dimension | Confirmed meaning/status | Notebook source title and ID | Supporting passage / evidence gap |
 | --- | --- | --- | --- |
@@ -114,4 +114,4 @@ Only actual separately authorized platform checks may record exact submitted que
 
 ## 5. Version and handoff
 
-Record exact version, preceding version if any, confirmed changes/reasons, unresolved risks, private artifact path and actual user acceptance or **pending**. Retain pause/repair history and only mark current evidence/gates complete when the recorded prerequisites were actually satisfied. Optional platform/seed verification can remain pending; stop after the user accepts the version and risks.
+Record exact version, preceding version if any, confirmed changes/reasons, unresolved risks, private artifact path and actual user acceptance or **pending**. Retain the recovery record as pause/repair history. Optional platform/seed verification can remain pending; stop after the user accepts the version and risks.
