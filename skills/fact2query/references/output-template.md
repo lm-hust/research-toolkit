@@ -102,16 +102,21 @@ Methodological basis and limits (reviewed 2026-10-12 in the [methodology report]
 
 ## 4. Independent validation states
 
-| Platform | Source-rule verification (primary location, date, bounded/historical) | Local checks (actual results per main and alternative) | Platform parser test | Eligible-seed diagnostic |
+State rules are owned by [revision](revision.md#independent-validation-states). Fill one table per version; every passed or failed cell names its version, date, entry and evidence.
+
+| Platform / tier | Source rule (owner, locator, date, bounded/historical) | Local check (version, date, per-check results) | Platform parser (version, date, entry, verbatim result) | Seed diagnostic (version, date, x/y, uncertain, not indexed) |
 | --- | --- | --- | --- | --- |
-| Scopus | | | Untested unless run | Untested unless run |
-| WoS Core Collection | | | Untested unless run | Untested unless run |
-| IEEE Xplore | Historical official basis; current platform untested | | Untested unless run | Untested unless run |
+| Scopus main / alternative | | | Untested unless run | Untested unless run |
+| WoS Core Collection main / alternative | | | Untested unless run | Untested unless run |
+| IEEE Xplore main / alternative | Historical official basis; current platform untested | | Untested unless run | Untested unless run |
 
-Local results enumerate English terms, quotes, parentheses, confirmed Boolean relationships, entry/field syntax and applicable phrase/wildcard rules **for each of six queries**. Failed checks require correction and a new check, not a pass label.
-
-Only actual separately authorized platform checks may record exact submitted query, date, UI/settings and parser feedback/counts. Only actual seed diagnostics may record user-confirmed eligibility, indexing, x/y indexed eligible seeds retrieved and uncertain indexing separately; parser acceptance is not seed coverage, and seed coverage is not population recall. Draft completion needs no invented live execution.
+Local results enumerate English terms, quotes, parentheses, confirmed Boolean relationships, entry/field syntax and applicable phrase/wildcard rules **for each of six queries**. Draft completion needs no invented live execution.
 
 ## 5. Version and handoff
 
-Record exact version, preceding version if any, confirmed changes/reasons, unresolved risks, private artifact path and actual user acceptance or **pending**. Retain the recovery record as pause/repair history. Optional platform/seed verification can remain pending; stop after the user accepts the version and risks.
+Record the current version, private artifact path and actual user acceptance or **pending**. Keep earlier versions' exact strings and states; never overwrite them. Retain the recovery record as pause/repair history.
+
+| Version | Preceding | Drafted | Feedback (verbatim or location) | Diagnosis | Change, reason, semantic effect | Gates re-run | Open risks | Acceptance |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
+Follow [revision](revision.md#revise-version-and-redeliver) for what each row requires. Optional platform/seed verification can remain pending; stop after the user accepts the version and risks.

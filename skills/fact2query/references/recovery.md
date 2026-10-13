@@ -1,6 +1,6 @@
 # Evidence and scope recovery
 
-Use this reference when identity/access fails, references are unusable, a source contradicts an answer, CIMO has a consequential gap, or the user changes scope. It owns only pause, repair and resume. Notebook commands, identity matching, source lookup and write permissions stay with [gemini-notebook](../../gemini-notebook/SKILL.md); provenance classes, gates, block logic and rendering stay with [fact2query](../SKILL.md).
+Use this reference when identity/access fails, references are unusable, a source contradicts an answer, CIMO has a consequential gap, or the user changes scope, including through [feedback revision](revision.md#revise-version-and-redeliver). It owns only pause, repair and resume. Notebook commands, identity matching, source lookup and write permissions stay with [gemini-notebook](../../gemini-notebook/SKILL.md); provenance classes, gates, block logic and rendering stay with [fact2query](../SKILL.md).
 
 ## Pause, repair, resume
 
