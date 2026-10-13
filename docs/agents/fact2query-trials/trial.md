@@ -1,17 +1,28 @@
-# fact2query isolated consumer trial
+# fact2query isolated consumer trial — runner only
 
-This is a small manual behavioral recipe at the agent-loading seam, not a text-assertion test or an automated LLM harness. The scenario below is **fictional synthetic fixture replay**: no actual Notebook lookup, platform search, real research topic or live human approval. Report those categories separately as pending.
+These runner recipes live outside `skills/` so the consumer under test never installs or reads them. This file and its siblings ([recovery](recovery-trial.md), [revision](revision-trial.md)) are small manual behavioral recipes at the agent-loading seam, not text-assertion tests or an automated LLM harness. Every scenario is **fictional synthetic fixture replay**: no actual Notebook lookup, platform search, real research topic or live human approval. Report those categories separately as pending. Give the consumer only the next staged input, never a recipe or its oracle.
 
 ## Installation and actual loading
 
-From the implementation checkout, choose a new disposable destination outside its source tree and record the checkout path/revision:
+Install with [trial in an isolated destination](../skill-publication.md#trial-in-an-isolated-destination), selecting exactly `fact2query` and `gemini-notebook` and a new disposable target outside the source tree. Point the intended consumer at that target, or have it explicitly read the linked SKILL.md files and the references it reaches. Record the checkout path/revision, both link targets, the actual consumer identity, invocation, cwd and read/load evidence in a private outside-repo trial record. Do not spawn a substitute consumer when orchestration authority belongs to the parent.
 
-```bash
-./scripts/sync-skills.sh --mode trial --skill fact2query --skill gemini-notebook --target /explicit/disposable/skills --dry-run
-./scripts/sync-skills.sh --mode trial --skill fact2query --skill gemini-notebook --target /explicit/disposable/skills
-```
+## Non-trigger scenario: ordinary Notebook summary
 
-Use only those two selected skills. Inspect both link targets; do not change global installation or unrelated skills. Deliberately configure the intended consumer to load that target, or have it explicitly read both linked SKILL.md files and the reached references. Record the actual consumer identity, invocation, cwd, target, revision and read/load evidence in a private outside-repo trial record. Link installation alone is not consumer acceptance. Do not spawn a substitute consumer when orchestration authority belongs to the parent.
+Run a fresh consumer in a disposable outside-repo cwd with both trial skills available. Tell it to read each available SKILL.md's frontmatter description, load only the skills that apply, and replay supplied fictional responses instead of executing Notebook calls. Do not name fact2query.
+
+Request: “Fixture replay, not live service access. Summarize what Gemini Notebook `Fictional Label Study` says about how museum labels are transcribed. A short paragraph is enough.”
+
+On requested reads, supply the inventory, history and source list from the success scenario below. After the consumer announces the ask, supply this fictional answer, conversation `fictional-conversation-80`, references `[fictional-source-a]`:
+
+> The notes describe optical recognition and manual transcription as alternative ways to transcribe labels; the optical method uses character recognition.
+
+Oracle:
+
+- The consumer loads gemini-notebook and does not start fact2query: no CIMO proposal, scope or block gate, search blocks, Boolean strings or platform queries.
+- It pins the full UUID ending `080` and relays the answer as a Notebook summary attributed to its source.
+- A one-line optional mention that query generation is available is acceptable; beginning that workflow is a fail.
+
+This checks description-based routing by an instructed consumer, not the host's automatic skill selection.
 
 ## Synthetic success scenario
 
@@ -75,4 +86,4 @@ Inspect the transcript and saved artifact, not keyword presence in implementatio
 - Artifact has six fully rendered English strings at correct entries, Scopus/WoS field syntax from their references, and no IEEE prefixes/caps. Quotes/parentheses are locally inspected. Coverage and phrase differences are explained.
 - Source-rule/local/parser/seed states are separate. IEEE remains historical/current untested; no live search results, parser or seed passes are invented. Live Notebook and human gates remain pending.
 
-Record pass/fail observations with transcript/artifact locations and applicable revision. A synthetic success does not prove autonomous routing on an ordinary summary, missing-dependency behavior, live authentication, real service responses or human acceptance. Those require separate actual scenarios; do not claim them from this replay.
+Record pass/fail observations with transcript/artifact locations and applicable revision. A synthetic success does not prove host-level automatic routing, live authentication, real service responses or human acceptance; the non-trigger scenario above and the [access guards](recovery-trial.md#access-guards-separate-fresh-fixture-runs) are separate runs. Do not claim any of these from this replay.

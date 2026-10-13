@@ -64,6 +64,10 @@ Entry: Advanced Search → Command Search, default All Metadata.
 
 Restriction/change and possible losses: [specific explanation]. Retain the historical label for this tier too. Do not claim a strict result-set subset if changed terms/fields/semantics do not warrant it.
 
+### Branch queries in a slot
+
+The six platform × tier slots stay fixed. When a [branch split](revision.md#length-and-rule-rejection) replaces one slot's query, that slot holds every branch, in order, each as its own labelled code block (`Branch 1 of n: [alternatives it carries]`) containing a complete, separately copyable string with the same entry. Never join branches with an instruction to combine strings, and never move a branch into another tier's slot. Below the branches, state which alternatives each carries and that the user runs every branch and combines and deduplicates the result sets. The other slots are unchanged. Validation states are recorded per branch.
+
 ## 2. Confirmed scope and evidence ledger
 
 - Notebook: actual title, full pinned UUID; relevant conversation ID/history context. Never include tokens/credentials.
@@ -119,4 +123,4 @@ Record the current version, private artifact path and actual user acceptance or 
 | Version | Preceding | Drafted | Feedback (verbatim or location) | Diagnosis | Change, reason, semantic effect | Gates re-run | Open risks | Acceptance |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
-Follow [revision](revision.md#revise-version-and-redeliver) for what each row requires. Optional platform/seed verification can remain pending; stop after the user accepts the version and risks.
+Follow [revision](revision.md#revise-version-and-redeliver) for what each row requires.

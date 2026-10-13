@@ -1,6 +1,6 @@
 # Feedback revision
 
-Use this reference when the user reports what happened after running a delivered query: a parser message, a rule/length rejection, a result profile, or missed seed papers. It owns validation-state rules, feedback diagnosis, seed diagnosis, revision explanation and version history. Platform syntax stays with the [Scopus](scopus.md), [WoS](web-of-science.md) and [IEEE](ieee-xplore.md) rule owners; scope pauses and re-confirmation stay with [recovery](recovery.md); artifact layout stays with the [output template](output-template.md).
+Use this reference when the user reports what happened after running a delivered query: a parser message, a rule/length rejection, a result profile, or missed seed papers. It owns validation-state rules, feedback diagnosis, seed diagnosis, revision explanation and version history; stopping at acceptance stays with [main step 5](../SKILL.md#5-deliver-locally-and-stop-at-acceptance). Platform syntax stays with the [Scopus](scopus.md), [WoS](web-of-science.md) and [IEEE](ieee-xplore.md) rule owners; scope pauses and re-confirmation stay with [recovery](recovery.md); artifact layout stays with the [output template](output-template.md).
 
 The [main write and execution boundary](../SKILL.md#1-load-the-dependency-and-pin-identity) still applies: fact2query does not run queries or seed lookups here. It records what the user, or another separately authorized actor, actually ran and reported.
 
@@ -30,19 +30,31 @@ Diagnose each parser message and each missed seed separately, then propose a cha
 | Parser error | Platform rejects or misreads the string. | Verbatim message, exact string, entry. | Recheck that platform's primary rule, locate the construct, repair syntax without changing meaning. Length or complexity rejections follow [length and rule rejection](#length-and-rule-rejection). |
 | Not indexed | The seed is absent from that platform's database. | User-reported lookup by DOI/title at that platform, with date. | No query change. Exclude it from that platform's denominator. |
 | Field mismatch | Indexed, but the concept appears only outside the searched field, for example only in full text. | The seed's searched-field metadata compared with block terms. | Explain the coverage difference. A different field needs the rule owner's verified subset or a recheck, and a stated scope/noise trade-off. |
-| Vocabulary gap | Indexed and in a searched field, but worded with a variant/synonym the block lacks. | The seed's actual wording. | Add the English variant with its provenance class. A term that broadens meaning is a scope change. |
+| Vocabulary gap | Indexed and in a searched field, but worded with a variant/synonym the block lacks. | The seed's actual wording. | Add the English variant under one of the [three provenance classes](#seed-derived-terms). A term that broadens meaning is a scope change. |
 | Over-restrictive concept | In scope, but fails an AND block or a focused-tier restriction. | Which block or restriction excluded it. | Options: make the block screening-only, add an OR alternative, or relax it in main only. Changing a co-required concept or role needs the block gate; changing scope needs [scope recovery](recovery.md#scope-changes). |
 | Unexplained | None of the above is established. | — | Keep it as an open risk. Do not change the query to chase it. |
 
 A result profile alone ("too many", "too few") is not a diagnosis. Ask for example records that are irrelevant or missing, and do not tune toward a count target. Never relax without limit and never promise zero misses.
+
+### Seed-derived terms
+
+Seed-record wording is evidence for a diagnosis, not a fourth provenance class. Classify each proposed term under the existing three:
+
+- **User intent/terms:** the user explicitly adopts wording from a seed record they reported. Record the seed ID as the rationale.
+- **Verified source wording:** only if the same wording is verified in a passage of the pinned Notebook, as in [references and interpretation](recovery.md#references-and-interpretation). Seed membership in the Notebook does not verify it.
+- **Model translation/expansion:** variants or synonyms the agent proposes beyond the reported wording.
+
+Adding, removing or reclassifying a term in a core block, including a seed-derived term, needs the block gate before rendering.
 
 ## Length and rule rejection
 
 When a platform rejects a query for length, term count or complexity, record the verbatim message and recheck the rule owner. Do not adopt an unverified or conflicting cap as fact; the rule owners list the known conflicts. Present the options with their semantic change:
 
 - **Remove terms:** list each removed term, its provenance class, and which records it may lose. Removing a user or verified-source term changes a confirmed block and needs the block gate.
-- **Split into branch queries:** each branch is a complete string with the same co-required blocks, alternatives divided across branches. State that the user must combine and deduplicate the result sets, and only claim platform-side combination if the rule owner verifies it.
+- **Split into branch queries:** each branch is a complete string with the same co-required blocks, alternatives divided across branches. Lay the branches out in their slot as the [output template](output-template.md#branch-queries-in-a-slot) defines. State that the user must combine and deduplicate the result sets, and only claim platform-side combination if the rule owner verifies it.
 - **Other repair** (a verified wildcard in place of listed variants, a narrower verified field): state what it adds or loses.
+
+If the same revision also adds terms to the rejected query (for example a vocabulary-gap fix), say how each added term interacts with the repair: which branch receives it, or what was removed to make room, and that the added length may trigger the same rejection again. Do not add terms to a rejected string without accounting for its rejection.
 
 The altered query is a new version. The rejected version keeps its failed parser state; never label the shortened query as the original passing.
 
@@ -59,10 +71,6 @@ Uncertain and not-indexed seeds are listed separately, never counted as misses. 
 ## Revise, version and redeliver
 
 1. Assign a new version, naming its predecessor. Keep the old version's exact strings and states unchanged.
-2. Show the proposed diff: each change, the feedback and diagnosis it answers, its provenance class and its semantic effect. Syntax-only repairs and labeled variants of an already-confirmed concept can be proposed directly. A change to block roles needs the block gate. A scope change, a new direction or reliance on a newly needed platform capability follows [recovery](recovery.md#pause-repair-resume): pause, re-ground, then pass the gates afresh.
+2. Show the proposed diff: each change, the feedback and diagnosis it answers, its provenance class and its semantic effect, including any [interaction with a length repair](#length-and-rule-rejection). A syntax-only repair that leaves terms and roles unchanged needs only the user's go-ahead on the diff. A change to core-block terms or block roles needs the block gate. A scope change, a new direction or reliance on a newly needed platform capability follows [scope recovery](recovery.md#scope-changes): pause, re-ground, then pass the gates afresh.
 3. Re-run main step 4 local checks on the new version and redeliver **all six** complete English queries with field differences and restrictions, through the [output template](output-template.md#5-version-and-handoff).
-4. Keep unexplained issues, untested states and residual risks visible.
-
-## Stop at acceptance
-
-Stop when the user accepts a version and its remaining risks. Record the acceptance, or **pending**, against that version. Further parser or seed checks can remain pending. Do not keep iterating toward a count or a zero-miss guarantee.
+4. Keep unexplained issues, untested states and residual risks visible, then hand off under [main step 5](../SKILL.md#5-deliver-locally-and-stop-at-acceptance).

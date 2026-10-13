@@ -11,6 +11,8 @@ After editing a skill, preview the selected names, then install to a disposable 
 ./scripts/sync-skills.sh --mode trial --skill whoami --skill gemini-notebook --target /tmp/research-toolkit-skill-trial
 ```
 
+Skill-specific behavioral runner recipes live outside `skills/`, so they never ship to the consumer under test: [fact2query trials](fact2query-trials/trial.md).
+
 Configure the intended consumer explicitly if you want it to load this trial. A directory of links is not itself proof that a running agent loaded the edited skill. Global installations are separate, explicit operations. Trial links are live: later source edits become visible through them.
 
 Done when: the selected destination points to this checkout, no unrelated target changed, and the relevant consumer has been deliberately pointed at it when testing actual invocation.
