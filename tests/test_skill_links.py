@@ -1,12 +1,13 @@
 """Pointers an agent follows: every relative Markdown link and #anchor in fact2query and its trial recipes resolves."""
 
+import functools
 import re
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKED = [ROOT / "skills" / "fact2query", ROOT / "docs" / "agents" / "fact2query-trials"]
+TARGET_DOC_ROOTS = [ROOT / "skills" / "fact2query", ROOT / "docs" / "agents" / "fact2query-trials"]
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 HEADING = re.compile(r"^ {0,3}#{1,6}\s+(.+?)\s*$")
 FENCE_OPEN = re.compile(r"^\s*(`{3,}|~{3,})")
@@ -34,7 +35,8 @@ def prose_lines(path: Path) -> list[str]:
     return lines
 
 
-def anchors(path: Path) -> set[str]:
+@functools.lru_cache(maxsize=None)
+def anchors(path: Path) -> frozenset[str]:
     """GitHub anchors: repeated slugs get -1, -2, ... in document order."""
     seen: dict[str, int] = {}
     result = set()
@@ -46,15 +48,15 @@ def anchors(path: Path) -> set[str]:
         count = seen.get(base, 0)
         seen[base] = count + 1
         result.add(f"{base}-{count}" if count else base)
-    return result
+    return frozenset(result)
 
 
 def relative_links(path: Path) -> list[str]:
     body = "\n".join(prose_lines(path))
-    return [t for t in LINK.findall(body) if not re.match(r"^[a-z][a-z0-9+.-]*:", t)]
+    return [target for target in LINK.findall(body) if not re.match(r"^[a-z][a-z0-9+.-]*:", target)]
 
 
-MARKDOWN = sorted(doc for tree in CHECKED for doc in tree.rglob("*.md"))
+MARKDOWN = sorted(doc for tree in TARGET_DOC_ROOTS for doc in tree.rglob("*.md"))
 
 
 @pytest.mark.parametrize("doc", MARKDOWN, ids=lambda p: str(p.relative_to(ROOT)))
